@@ -1,0 +1,23 @@
+<details>
+    <summary>{{ tree[app_id].app_name }} ({{ app_id }})</summary>
+
+    {% if tree[app_id].instances %}
+    <ul>
+        {% for inst in tree[app_id].instances %}
+        <li>
+            <strong>{{ inst.instance_name|default:"Unnamed" }}</strong>
+            <div class="meta">
+                Env: {{ inst.environment }} |
+                Install: {{ inst.install_type }}<br>
+                Service: {{ inst.service_name }} |
+                Jira: {{ inst.jira_backlog_id }}
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% for child_id in tree[app_id].children %}
+    {% include "services/_app_node.html" with app_id=child_id tree=tree %}
+    {% endfor %}
+</details>

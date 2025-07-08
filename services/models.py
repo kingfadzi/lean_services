@@ -2,15 +2,15 @@ from django.db import models
 
 # Create your models here.
 class ServiceInstanceRecord:
-    def __init__(self, lean_control_service_id, jira_backlog_id, service_id, service_name,
-                 app_id, app_name, instance_id, instance_name, environment, install_type):
-        self.lean_control_service_id = lean_control_service_id
-        self.jira_backlog_id = jira_backlog_id
-        self.service_id = service_id
-        self.service_name = service_name
-        self.app_id = app_id
-        self.app_name = app_name
-        self.instance_id = instance_id
-        self.instance_name = instance_name
-        self.environment = environment
+    def __init__(self, lcs_id, jira, sid, sname, aid, aname, iid, iname, env, install_type, parent_app_id=None):
+        self.lean_control_service_id = lcs_id
+        self.jira_backlog_id = jira
+        self.service_id = sid
+        self.service_name = sname
+        self.app_id = aid
+        self.app_name = aname
+        self.instance_id = iid
+        self.instance_name = iname
+        self.environment = env
         self.install_type = install_type
+        self.parent_app_id = parent_app_id

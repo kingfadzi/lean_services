@@ -1,99 +1,33 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Lean Control Service Tree</title>
+    <title>Lean Control Services</title>
     <style>
-        body {
-            font-family: sans-serif;
-            padding: 2rem;
-            background-color: #fdfdfd;
-        }
-        summary {
-            font-weight: bold;
-            cursor: pointer;
-            margin-top: 1rem;
-        }
-        ul {
-            list-style-type: none;
-            padding-left: 1.5rem;
-            border-left: 2px solid #ccc;
-        }
-        li {
-            margin: 0.5rem 0;
-        }
-        .instance-meta {
-            font-size: 0.85rem;
-            color: #555;
-        }
-        .search-box {
-            margin-bottom: 2rem;
-        }
-        .pagination {
-            margin-top: 2rem;
-        }
-        .pagination span,
-        .pagination a {
-            margin-right: 10px;
-            text-decoration: none;
-            font-weight: bold;
-        }
+        body { font-family: sans-serif; padding: 2rem; }
+        details { margin-bottom: 1rem; }
+        summary { font-weight: bold; cursor: pointer; }
+        ul { padding-left: 1.5rem; list-style-type: none; }
+        li { margin: 0.5rem 0; }
+        .meta { font-size: 0.85rem; color: #666; }
     </style>
 </head>
 <body>
 
 <h1>Lean Control Services</h1>
 
-<div class="search-box">
-    <form method="get">
-        <input type="text" name="q" value="{{ query }}" placeholder="Search apps by ID or name..." />
+<form method="get">
+    <label for="mode">View Mode:</label>
+    <select name="mode" onchange="this.form.submit()">
+        <option value="by_si" {% if mode == "by_si" %}selected{% endif %}>Service Instance–Centric</option>
+        <option value="by_ts" {% if mode == "by_ts" %}selected{% endif %}>Technical Service–Centric</option>
+    </select>
+</form>
 
-        <select name="mode">
-            <option value="by_si" {% if mode == "by_si" %}selected{% endif %}>Service Instance–Centric</option>
-            <option value="by_ts" {% if mode == "by_ts" %}selected{% endif %}>Technical Service–Centric</option>
-        </select>
+<hr>
 
-        <button type="submit">Apply</button>
-    </form>
-</div>
-
-{% if page_obj.object_list %}
-{% for app_id, instances in page_obj.object_list %}
-<details>
-    <summary>
-        App: {{ app_id }} — {{ instances.0.app_name|default:"Unknown App" }}
-    </summary>
-    <ul>
-        {% for inst in instances %}
-        <li>
-            <strong>{{ inst.instance_name|default:"Unnamed Instance" }}</strong>
-            <div class="instance-meta">
-                Env: {{ inst.environment|default:"?" }} |
-                Install: {{ inst.install_type|default:"?" }}<br>
-                Service: {{ inst.service_name|default:"?" }} |
-                Jira: {{ inst.jira_backlog_id|default:"?" }}
-            </div>
-        </li>
-        {% endfor %}
-    </ul>
-</details>
+{% for root_id in tree_data.roots %}
+{% include "services/_app_node.html" with app_id=root_id tree=tree_data.apps %}
 {% endfor %}
-{% else %}
-<p>No results found.</p>
-{% endif %}
-
-<div class="pagination">
-    {% if page_obj.has_previous %}
-    <a href="?q={{ query }}&mode={{ mode }}&page=1">First</a>
-    <a href="?q={{ query }}&mode={{ mode }}&page={{ page_obj.previous_page_number }}">Previous</a>
-    {% endif %}
-
-    <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
-
-    {% if page_obj.has_next %}
-    <a href="?q={{ query }}&mode={{ mode }}&page={{ page_obj.next_page_number }}">Next</a>
-    <a href="?q={{ query }}&mode={{ mode }}&page={{ page_obj.paginator.num_pages }}">Last</a>
-    {% endif %}
-</div>
 
 </body>
 </html>
