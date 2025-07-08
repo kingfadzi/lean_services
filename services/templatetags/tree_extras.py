@@ -1,13 +1,10 @@
 from django import template
-
 register = template.Library()
 
 @register.filter
 def get_item(dictionary, key):
-    return dictionary.get(key, {})
+    return dictionary.get(key)
 
 @register.filter
-def get_key(obj, key):
-    if isinstance(obj, dict):
-        return obj.get(key)
-    return None
+def get_key(dictionary, key):
+    return dictionary.get(key)
