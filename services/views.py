@@ -112,7 +112,8 @@ def build_service_app_tree(records, search_term=None):
                 rec_dict.get("instance_name", ""),
                 rec_dict.get("jira_backlog_id", ""),
                 rec_dict.get("environment", ""),
-                rec_dict.get("install_type", "")
+                rec_dict.get("install_type", ""),
+                rec_dict.get("lean_control_service_id", "")
             ]).lower()
             if search_term.lower() not in searchable:
                 continue
