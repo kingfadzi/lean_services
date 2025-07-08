@@ -36,7 +36,7 @@ def fetch_records(mode):
         query = """
             SELECT
                 fia.lean_control_service_id,
-                lpbd.jira_backlog_id,
+                lpbd_dedup.jira_backlog_id,
                 bs.service_correlation_id,
                 bs.service,
                 bac.correlation_id,
@@ -46,16 +46,28 @@ def fetch_records(mode):
                 si.environment,
                 si.install_type,
                 bac.application_parent_correlation_id
+            
             FROM public.vwsfitserviceinstance AS si
+            
             JOIN public.lean_control_application AS fia
               ON fia.servicenow_app_id = si.correlation_id
-            JOIN public.lean_control_product_backlog_details AS lpbd
-              ON lpbd.lct_product_id = fia.lean_control_service_id
-             AND lpbd.is_parent = TRUE
+            
+            JOIN (
+                SELECT DISTINCT ON (lct_product_id)
+                    lct_product_id,
+                    jira_backlog_id
+                FROM public.lean_control_product_backlog_details
+                WHERE is_parent = TRUE
+                ORDER BY lct_product_id, jira_backlog_id  
+            ) AS lpbd_dedup
+              ON lpbd_dedup.lct_product_id = fia.lean_control_service_id
+            
             JOIN public.vwsfbusinessapplication AS bac
               ON si.business_application_sysid = bac.business_application_sys_id
+            
             JOIN public.vwsfitbusinessservice AS bs
               ON si.it_business_service_sysid = bs.it_business_service_sysid
+
         """
 
     with connection.cursor() as cursor:
