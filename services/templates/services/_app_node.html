@@ -1,12 +1,15 @@
-<details>
-    <summary>{{ tree[app_id].app_name }} ({{ app_id }})</summary>
+{% load tree_extras %}
 
-    {% if tree[app_id].instances %}
+<details>
+    <summary>{{ tree|get_item:app_id|get_key:"app_name" }} ({{ app_id }})</summary>
+
+    {% with tree|get_item:app_id as app %}
+    {% if app|get_key:"instances" %}
     <ul>
-        {% for inst in tree[app_id].instances %}
+        {% for inst in app|get_key:"instances" %}
         <li>
             <strong>{{ inst.instance_name|default:"Unnamed" }}</strong>
-            <div class="meta">
+            <div class="instance-meta">
                 Env: {{ inst.environment }} |
                 Install: {{ inst.install_type }}<br>
                 Service: {{ inst.service_name }} |
@@ -17,7 +20,14 @@
     </ul>
     {% endif %}
 
-    {% for child_id in tree[app_id].children %}
-    {% include "services/_app_node.html" with app_id=child_id tree=tree %}
-    {% endfor %}
+    {% if app|get_key:"children" %}
+    <ul>
+        {% for child_id in app|get_key:"children" %}
+        <li>
+            {% include "services/_app_node.html" with app_id=child_id tree=tree %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+    {% endwith %}
 </details>

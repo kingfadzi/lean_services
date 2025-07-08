@@ -68,7 +68,7 @@ def fetch_records(mode):
     ]
 
 
-def build_app_tree(records):
+def build_app_tree(records, search_term=None):
     apps = defaultdict(lambda: {"instances": [], "children": []})
     roots = []
 
@@ -76,6 +76,19 @@ def build_app_tree(records):
         rec_dict = rec.__dict__
         app_id = rec_dict["app_id"]
         parent_id = rec_dict.get("parent_app_id")
+
+        # Apply search filter if needed
+        if search_term:
+            searchable = " ".join([
+                rec_dict.get("app_name", ""),
+                rec_dict.get("instance_name", ""),
+                rec_dict.get("service_name", ""),
+                rec_dict.get("jira_backlog_id", ""),
+                rec_dict.get("environment", ""),
+                rec_dict.get("install_type", "")
+            ]).lower()
+            if search_term.lower() not in searchable:
+                continue
 
         apps[app_id]["app_name"] = rec_dict["app_name"]
         apps[app_id]["instances"].append(rec_dict)
@@ -91,10 +104,13 @@ def build_app_tree(records):
 
 def service_tree_view(request):
     mode = request.GET.get("mode", "by_si")
+    search_term = request.GET.get("q", "").strip()
+
     records = fetch_records(mode)
-    tree_data = build_app_tree(records)
+    tree_data = build_app_tree(records, search_term)
 
     return render(request, "services/service_tree.html", {
         "tree_data": tree_data,
-        "mode": mode
+        "mode": mode,
+        "search_term": search_term
     })
