@@ -102,6 +102,36 @@ def build_app_tree(records, search_term=None):
     return {"apps": apps, "roots": roots}
 
 
+def filter_tree_data(tree_data, search_term):
+
+    if not search_term:
+        return tree_data
+
+    search = search_term.lower()
+    filtered_apps = {}
+    roots = []
+
+    for app_id, app in tree_data["apps"].items():
+        matching_instances = [
+            inst for inst in app["instances"]
+            if any(search in str(value).lower() for key, value in inst.items())
+        ]
+
+        if matching_instances or app_id in tree_data["roots"]:
+            filtered_apps[app_id] = {
+                "app_name": app["app_name"],
+                "instances": matching_instances,
+                "children": app["children"]
+            }
+
+    for root_id in tree_data["roots"]:
+        if root_id in filtered_apps:
+            roots.append(root_id)
+
+    return {
+        "apps": filtered_apps,
+        "roots": roots
+    }
 
 
 def service_tree_view(request):

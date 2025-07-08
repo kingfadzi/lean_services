@@ -19,7 +19,7 @@
             margin-bottom: 1.5rem;
         }
 
-        select, input[type="text"] {
+        select, input[type="text"], button {
             font-size: 1rem;
             padding: 0.3rem;
         }
@@ -47,35 +47,58 @@
         .empty {
             color: #888;
         }
+
+        .pagination {
+            margin-top: 2rem;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
     </style>
 </head>
 <body>
 
 <h1>Lean Control Services</h1>
 
+<form method="get" class="inline-form">
+    <select name="mode" onchange="this.form.submit()">
+        <option value="by_si" {% if mode == "by_si" %}selected{% endif %}>By Service Instance</option>
+        <option value="by_ts" {% if mode == "by_ts" %}selected{% endif %}>By Technical Service</option>
+    </select>
+
+    <input type="text" name="search" placeholder="Filter apps, instances, services..." value="{{ search }}">
+    <button type="submit">Apply</button>
+</form>
+
+{% if page_roots %}
 {% for root_id in page_roots %}
 {% include "services/_app_node.html" with app_id=root_id tree=tree_data.apps %}
 {% endfor %}
 
-<div style="margin-top: 2rem;">
-    <form method="get" style="display: flex; gap: 1rem; align-items: center;">
-        {% if mode %}<input type="hidden" name="mode" value="{{ mode }}">{% endif %}
-        {% if search %}<input type="hidden" name="search" value="{{ search }}">{% endif %}
-
-        <div>
-            {% if page_obj.has_previous %}
-            <button name="page" value="{{ page_obj.previous_page_number }}">Previous</button>
-            {% endif %}
-
-            Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
-
-            {% if page_obj.has_next %}
-            <button name="page" value="{{ page_obj.next_page_number }}">Next</button>
-            {% endif %}
-        </div>
+<div class="pagination">
+    {% if page_obj.has_previous %}
+    <form method="get" style="display:inline;">
+        <input type="hidden" name="page" value="{{ page_obj.previous_page_number }}">
+        <input type="hidden" name="mode" value="{{ mode }}">
+        <input type="hidden" name="search" value="{{ search }}">
+        <button type="submit">Previous</button>
     </form>
-</div>
+    {% endif %}
 
+    Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+
+    {% if page_obj.has_next %}
+    <form method="get" style="display:inline;">
+        <input type="hidden" name="page" value="{{ page_obj.next_page_number }}">
+        <input type="hidden" name="mode" value="{{ mode }}">
+        <input type="hidden" name="search" value="{{ search }}">
+        <button type="submit">Next</button>
+    </form>
+    {% endif %}
+</div>
+{% else %}
+<p class="empty">No data found.</p>
+{% endif %}
 
 </body>
 </html>
