@@ -4,6 +4,7 @@ from collections import defaultdict
 from .models import ServiceInstanceRecord
 from django.core.paginator import Paginator
 
+
 def fetch_records(mode):
     if mode == "by_ts":
         query = """
@@ -46,54 +47,62 @@ def fetch_records(mode):
                 si.environment,
                 si.install_type,
                 bac.application_parent_correlation_id
-            
             FROM public.vwsfitserviceinstance AS si
-            
             JOIN public.lean_control_application AS fia
               ON fia.servicenow_app_id = si.correlation_id
-            
             JOIN (
                 SELECT DISTINCT ON (lct_product_id)
                     lct_product_id,
                     jira_backlog_id
                 FROM public.lean_control_product_backlog_details
                 WHERE is_parent = TRUE
-                ORDER BY lct_product_id, jira_backlog_id  
+                ORDER BY lct_product_id, jira_backlog_id
             ) AS lpbd_dedup
               ON lpbd_dedup.lct_product_id = fia.lean_control_service_id
-            
             JOIN public.vwsfbusinessapplication AS bac
               ON si.business_application_sysid = bac.business_application_sys_id
-            
             JOIN public.vwsfitbusinessservice AS bs
               ON si.it_business_service_sysid = bs.it_business_service_sysid
-
         """
 
     with connection.cursor() as cursor:
         cursor.execute(query)
         rows = cursor.fetchall()
 
-    # Map fields for ServiceInstanceRecord
     return [
-        ServiceInstanceRecord(*row[:10], parent_app_id=row[10])
+        ServiceInstanceRecord(
+            lcs_id=row[0],
+            jira=row[1],
+            sid=row[2],
+            sname=row[3],
+            aid=row[4],
+            aname=row[5],
+            iid=row[6],
+            iname=row[7],
+            env=row[8],
+            install_type=row[9],
+            parent_app_id=row[10]
+        )
         for row in rows
     ]
 
 
 def build_service_app_tree(records, search_term=None):
-
-    bs_services = defaultdict(
-        lambda: {"service_name": None, "apps": defaultdict(lambda: {"app_name": None, "instances": [], "children": []})}
+    services = defaultdict(
+        lambda: {"apps": defaultdict(lambda: {"app_name": None, "instances": [], "children": []})}
     )
     roots = []
 
     for rec in records:
         rec_dict = rec.__dict__
-        bs_service_id = rec_dict["service_correlation_id"]
-        bs_service_name = rec_dict["service_name"]
+        lcs_id = rec_dict["lean_control_service_id"]
         app_id = rec_dict["app_id"]
         parent_id = rec_dict.get("parent_app_id")
+
+        print(f"[build] LCS: {lcs_id}, App: {app_id}, Parent: {parent_id}")
+
+        if not rec_dict["app_name"]:
+            print(f"[build] MISSING app_name for: {app_id}")
 
         # Apply search filter if needed
         if search_term:
@@ -108,22 +117,17 @@ def build_service_app_tree(records, search_term=None):
             if search_term.lower() not in searchable:
                 continue
 
-        # Set service name
-        bs_services[bs_service_id]["service_name"] = bs_service_name
+        services[lcs_id]["apps"][app_id]["app_name"] = rec_dict["app_name"]
+        services[lcs_id]["apps"][app_id]["instances"].append(rec_dict)
 
-        # Set app name and add instance
-        bs_services[bs_service_id]["apps"][app_id]["app_name"] = rec_dict["app_name"]
-        bs_services[bs_service_id]["apps"][app_id]["instances"].append(rec_dict)
-
-        # Link child apps to parent
         if parent_id:
-            bs_services[bs_service_id]["apps"][parent_id]["children"].append(app_id)
+            services[lcs_id]["apps"][parent_id]["children"].append(app_id)
 
-        # Track root services
-        if bs_service_id not in roots:
-            roots.append(bs_service_id)
+        if lcs_id not in roots:
+            roots.append(lcs_id)
 
-    return {"bs_services": bs_services, "roots": roots}
+    return {"services": services, "roots": roots}
+
 
 def filter_service_tree(tree_data, search_term):
     if not search_term:
@@ -133,7 +137,7 @@ def filter_service_tree(tree_data, search_term):
     filtered_services = {}
     roots = []
 
-    for bs_service_id, service in tree_data["bs_services"].items():
+    for lcs_id, service in tree_data["services"].items():
         filtered_apps = {}
         for app_id, app in service["apps"].items():
             matching_instances = [
@@ -147,16 +151,14 @@ def filter_service_tree(tree_data, search_term):
                     "children": app["children"]
                 }
         if filtered_apps:
-            filtered_services[bs_service_id] = {
-                "service_name": service["service_name"],
-                "apps": filtered_apps
-            }
-            roots.append(bs_service_id)
+            filtered_services[lcs_id] = {"apps": filtered_apps}
+            roots.append(lcs_id)
 
     return {
-        "bs_services": filtered_services,
+        "services": filtered_services,
         "roots": roots
     }
+
 
 def service_tree_view(request):
     mode = request.GET.get("mode", "by_si")
@@ -166,17 +168,15 @@ def service_tree_view(request):
     records = fetch_records(mode)
     tree_data = build_service_app_tree(records, search_term=search)
 
-    # Paginate root bs.services
     roots = tree_data["roots"]
-    paginator = Paginator(roots, 10)  # 10 services per page
+    paginator = Paginator(roots, 10)
     page_obj = paginator.get_page(page_number)
     page_roots = page_obj.object_list
 
-    # Only show paginated services
-    paginated_bs_services = {sid: tree_data["bs_services"][sid] for sid in page_roots}
+    paginated_services = {sid: tree_data["services"][sid] for sid in page_roots}
 
     return render(request, "services/service_tree.html", {
-        "bs_services": paginated_bs_services,
+        "lcs_services": paginated_services,
         "mode": mode,
         "search": search,
         "page_obj": page_obj,

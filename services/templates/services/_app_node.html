@@ -1,33 +1,35 @@
 {% load tree_extras %}
 
+{% with app=tree|get_item:app_id %}
+{% if app %}
 <details>
-    <summary>{{ tree|get_item:app_id|get_key:"app_name" }} ({{ app_id }})</summary>
+    <summary>{{ app|get_key:"app_name" }} ({{ app_id }})</summary>
 
-    {% with tree|get_item:app_id as app %}
-    {% if app|get_key:"instances" %}
+    {% if app.instances %}
     <ul>
-        {% for inst in app|get_key:"instances" %}
-        <li>
+        {% for inst in app.instances %}
+        <li class="instance">
             <strong>{{ inst.instance_name|default:"Unnamed" }}</strong>
             <div class="instance-meta">
-                Env: {{ inst.environment }} |
-                Install: {{ inst.install_type }}<br>
-                Service: {{ inst.service_name }} |
-                Jira: {{ inst.jira_backlog_id }}
+                Env: {{ inst.environment|default:"" }} |
+                Install: {{ inst.install_type|default:"" }}<br>
+                Service: {{ inst.service_name|default:"" }} |
+                Jira: {{ inst.jira_backlog_id|default:"" }}
             </div>
         </li>
         {% endfor %}
     </ul>
     {% endif %}
 
-    {% if app|get_key:"children" %}
+    {% if app.children %}
     <ul>
-        {% for child_id in app|get_key:"children" %}
+        {% for child_id in app.children %}
         <li>
             {% include "services/_app_node.html" with app_id=child_id tree=tree %}
         </li>
         {% endfor %}
     </ul>
     {% endif %}
-    {% endwith %}
 </details>
+{% endif %}
+{% endwith %}

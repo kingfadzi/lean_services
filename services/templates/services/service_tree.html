@@ -52,15 +52,15 @@
     <button type="submit">Apply</button>
 </form>
 
-{% if bs_services %}
-{% for bs_id in page_roots %}
-{% with service=bs_services|get_item:bs_id %}
+{% if lcs_services %}
+{% for lcs_id in page_roots %}
+{% with service=lcs_services|get_item:lcs_id %}
 <details open>
-    <summary>{{ service.service_name }} ({{ bs_id }})</summary>
+    <summary>Lean Control Service: {{ lcs_id }}</summary>
     <ul>
         {% for app_id in service.apps %}
         {% with app=service.apps|get_item:app_id %}
-        {% if not app.parent %}
+        {% if not app.parent|default:False %}
         <li>
             {% include "services/_app_node.html" with app_id=app_id tree=service.apps %}
         </li>
@@ -72,7 +72,6 @@
 {% endwith %}
 {% endfor %}
 
-{# Pagination controls #}
 <div style="margin-top: 2rem;">
     {% if page_obj.has_previous %}
     <a href="?page={{ page_obj.previous_page_number }}&search={{ search }}&mode={{ mode }}">Previous</a>
