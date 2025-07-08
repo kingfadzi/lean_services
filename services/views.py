@@ -67,29 +67,66 @@ def fetch_by_ts_records():
     return [ServiceInstanceRecord(*row) for row in rows]
 
 
-def service_tree_view(request):
-    mode = request.GET.get("mode", "by_si")
-    query = request.GET.get("q", "").strip().lower()
-    page_number = request.GET.get("page", 1)
+def _fetch_sql(query):
+    with connection.cursor() as cursor:
+        cursor.execute(query)
+        rows = cursor.fetchall()
+    return [ServiceInstanceRecord(*row) for row in rows]
 
-    if mode == "by_ts":
-        records = fetch_by_ts_records()
-    else:
-        records = fetch_by_si_records()
 
+def group_records_by_app(records):
     tree = defaultdict(list)
     for rec in records:
         tree[rec.app_id].append(rec.__dict__)
+    return tree
+
+
+def filter_tree(tree, query):
+    query = query.lower().strip()
+
+    def matches(record):
+        return any(
+            query in str(record.get(field, "")).lower()
+            for field in [
+                "lean_control_service_id",
+                "jira_backlog_id",
+                "service_id",
+                "service_name",
+                "app_id",
+                "app_name",
+                "instance_id",
+                "instance_name",
+                "environment",
+                "install_type",
+            ]
+        )
+
+    filtered = {
+        k: [r for r in v if matches(r)]
+        for k, v in tree.items()
+    }
+
+    return {k: v for k, v in filtered.items() if v}
+
+
+def paginate_tree(tree, page_number, per_page=25):
+    app_items = list(tree.items())
+    paginator = Paginator(app_items, per_page)
+    return paginator.get_page(page_number)
+
+
+def service_tree_view(request):
+    mode = request.GET.get("mode", "by_si")
+    query = request.GET.get("q", "")
+    page_number = request.GET.get("page", 1)
+
+    records = fetch_by_si_records() if mode == "by_si" else fetch_by_ts_records()
+    tree = group_records_by_app(records)
 
     if query:
-        tree = {
-            k: v for k, v in tree.items()
-            if query in k.lower() or query in v[0].get("app_name", "").lower()
-        }
+        tree = filter_tree(tree, query)
 
-    app_items = list(tree.items())
-    paginator = Paginator(app_items, 25)
-    page_obj = paginator.get_page(page_number)
+    page_obj = paginate_tree(tree, page_number)
 
     return render(request, "services/service_tree.html", {
         "page_obj": page_obj,
