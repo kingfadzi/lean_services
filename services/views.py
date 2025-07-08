@@ -2,7 +2,7 @@ from django.shortcuts import render
 from django.db import connection
 from collections import defaultdict
 from .models import ServiceInstanceRecord
-
+from django.core.paginator import Paginator
 
 def fetch_records(mode):
     if mode == "by_ts":
@@ -102,15 +102,30 @@ def build_app_tree(records, search_term=None):
     return {"apps": apps, "roots": roots}
 
 
+
+
 def service_tree_view(request):
     mode = request.GET.get("mode", "by_si")
-    search_term = request.GET.get("q", "").strip()
+    search = request.GET.get("search", "").strip()
+    page_number = request.GET.get("page", 1)
 
     records = fetch_records(mode)
-    tree_data = build_app_tree(records, search_term)
+    tree_data = build_app_tree(records)
+
+    if search:
+        tree_data = filter_tree_data(tree_data, search)
+
+    # Paginate root apps only
+    roots = tree_data["roots"]
+    paginator = Paginator(roots, 10)  # 10 roots per page
+
+    page_obj = paginator.get_page(page_number)
+    page_roots = page_obj.object_list
 
     return render(request, "services/service_tree.html", {
         "tree_data": tree_data,
         "mode": mode,
-        "search_term": search_term
+        "search": search,
+        "page_obj": page_obj,
+        "page_roots": page_roots,
     })
