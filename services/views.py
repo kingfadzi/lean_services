@@ -107,16 +107,22 @@ def build_service_app_tree(records, search_term=None):
         # Apply search filter if needed
         if search_term:
             searchable = " ".join([
-                rec_dict.get("service_name", ""),
-                rec_dict.get("app_name", ""),
-                rec_dict.get("instance_name", ""),
-                rec_dict.get("jira_backlog_id", ""),
-                rec_dict.get("environment", ""),
-                rec_dict.get("install_type", ""),
-                rec_dict.get("lean_control_service_id", "")
+                rec_dict.get("service_name", ""),              # bs.service
+                rec_dict.get("app_name", ""),                  # business_application_name
+                rec_dict.get("instance_name", ""),             # it_service_instance
+                rec_dict.get("jira_backlog_id", ""),           # jira_backlog_id
+                rec_dict.get("environment", ""),               # environment
+                rec_dict.get("install_type", ""),              # install_type
+
+                rec_dict.get("service_id", ""),                # bs.service_correlation_id
+                rec_dict.get("app_id", ""),                    # correlation_id
+                rec_dict.get("instance_id", ""),               # si.correlation_id
+                rec_dict.get("lean_control_service_id", ""),   # lean_control_service_id
             ]).lower()
+
             if search_term.lower() not in searchable:
                 continue
+
 
         services[lcs_id]["apps"][app_id]["app_name"] = rec_dict["app_name"]
         services[lcs_id]["apps"][app_id]["instances"].append(rec_dict)
