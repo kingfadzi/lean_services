@@ -27,12 +27,11 @@ attest-validation:
   image: python:3.10
   before_script:
     - python3 -m venv venv
-    - . venv/bin/activate
-    - pip install --upgrade pip
-    - pip install in-toto
+    - ./venv/bin/pip install --upgrade pip
+    - ./venv/bin/pip install in-toto
   script: |
-    venv/bin/in-toto-keygen --algorithm ed25519 --name ephemeral
-    venv/bin/in-toto-run --step-name validate-jira \
+    ./venv/bin/in-toto-keygen --algorithm ed25519 --name ephemeral
+    ./venv/bin/in-toto-run --step-name validate-jira \
       --products validated_issues.json opa_input.json \
       --key ephemeral \
       --metadata validate-jira.link
@@ -40,6 +39,7 @@ attest-validation:
     paths:
       - validate-jira.link
       - ephemeral.pub
+
 
 
 
