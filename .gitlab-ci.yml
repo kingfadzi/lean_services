@@ -24,9 +24,10 @@ mock-validate-jira:
 
 attest-validation:
   stage: attest
-  image: python:3.11
+  image: python:3.10
   before_script:
-    - pip install in-toto
+    - pip install --user in-toto
+    - export PATH="$PATH:$(python3 -m site --user-base)/bin"
   script: |
     in-toto-keygen --algorithm ed25519 --name ephemeral
     in-toto-run --step-name validate-jira \
@@ -37,6 +38,7 @@ attest-validation:
     paths:
       - validate-jira.link
       - ephemeral.pub
+
 
 
 policy-check:
