@@ -29,7 +29,7 @@ attest-validation:
     - pip install --user in-toto
     - export PATH="$PATH:$(python3 -m site --user-base)/bin"
   script: |
-    in-toto-keygen --algorithm ed25519 --name ephemeral
+    python3 -m in_toto.keygen --algorithm ed25519 --name ephemeral
     in-toto-run --step-name validate-jira \
       --products validated_issues.json opa_input.json \
       --key ephemeral \
@@ -38,6 +38,7 @@ attest-validation:
     paths:
       - validate-jira.link
       - ephemeral.pub
+
 
 
 
