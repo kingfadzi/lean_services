@@ -28,7 +28,7 @@ attest-validation:
   before_script:
     - python3 -m venv venv
     - ./venv/bin/pip install --upgrade pip
-    - ./venv/bin/pip install in-toto
+    - ./venv/bin/pip install in-toto securesystemslib
   script:
     # Generate Ed25519 key pair using securesystemslib (provided by in-toto)
     - |
@@ -46,10 +46,6 @@ attest-validation:
     paths:
       - validate-jira.link
       - ephemeral.pub
-
-
-
-
 
 policy-check:
   stage: policy_check
