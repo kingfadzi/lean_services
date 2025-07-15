@@ -28,13 +28,15 @@ attest-validation:
   before_script:
     - pip install in-toto
   script: |
+    in-toto-keygen --algorithm ed25519 --name ephemeral
     in-toto-run --step-name validate-jira \
       --products validated_issues.json opa_input.json \
-      --key "$IN_TOTO_KEY" \
+      --key ephemeral \
       --metadata validate-jira.link
   artifacts:
     paths:
       - validate-jira.link
+      - ephemeral.pub
 
 
 policy-check:
