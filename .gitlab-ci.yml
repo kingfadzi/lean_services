@@ -1,0 +1,72 @@
+stages:
+  - validate
+  - attest
+  - policy_check
+  - change_request
+  - approval
+  - deploy
+
+variables:
+  OPA_URL: "http://mars.butterflycluster.com:8181/v1/data/pipeline/allow"
+  SERVICENOW_URL: "https://$SERVICENOW_INSTANCE.service-now.com/api/now/table/change_request"
+  IN_TOTO_KEY: "$IN_TOTO_KEY"
+  GIT_STRATEGY: clone
+
+mock-validate-jira:
+  stage: validate
+  script:
+    - echo '{ "ticket": "DASH-123", "status": "Open", "type": "Story" }' > validated_issues.json
+    - echo '{ "validated_jira": true, "has_high_severity": false, "license_compliant": true }' > opa_input.json
+  artifacts:
+    paths:
+      - validated_issues.json
+      - opa_input.json
+
+attest-validation:
+  stage: attest
+  script:
+    - in-toto-run --step-name validate-jira \
+        --products validated_issues.json opa_input.json \
+        --key "$IN_TOTO_KEY" \
+        --metadata validate-jira.link
+  artifacts:
+    paths:
+      - validate-jira.link
+
+policy-check:
+  stage: policy_check
+  script:
+    - curl -s -X POST -H "Content-Type: application/json" -d @opa_input.json $OPA_URL > opa_result.json
+    - cat opa_result.json
+    - jq '.result.allow' opa_result.json | grep true || exit 1
+  artifacts:
+    paths:
+      - opa_result.json
+
+request-cr:
+  stage: change_request
+  script:
+    - >
+      curl -s -X POST "$SERVICENOW_URL"
+      -H "Content-Type: application/json"
+      -H "Authorization: Bearer $SERVICENOW_TOKEN"
+      -d @opa_input.json > cr_response.json
+  artifacts:
+    paths:
+      - cr_response.json
+
+manual-approval:
+  stage: approval
+  script:
+    - echo "Manual approval step, use GitLab UI"
+  when: manual
+  allow_failure: false
+
+deploy:
+  stage: deploy
+  script:
+    - >
+      echo '{ "status": "success", "timestamp": "'$(date)'" }' > deployment_metadata.json
+  artifacts:
+    paths:
+      - deployment_metadata.json
