@@ -29,12 +29,19 @@ attest-validation:
     - python3 -m venv venv
     - ./venv/bin/pip install --upgrade pip
     - ./venv/bin/pip install in-toto
-  script: |
-    ./venv/bin/in-toto-keygen --algorithm ed25519 --name ephemeral
-    ./venv/bin/in-toto-run --step-name validate-jira \
-      --products validated_issues.json opa_input.json \
-      --key ephemeral \
-      --metadata validate-jira.link
+  script:
+    # Generate Ed25519 key pair using securesystemslib (provided by in-toto)
+    - |
+      ./venv/bin/python -c "
+      import sys
+      from securesystemslib.interface import generate_and_write_ed25519_keypair
+      generate_and_write_ed25519_keypair('ephemeral')
+      "
+    # Run in-toto operation using generated key
+    - ./venv/bin/in-toto-run --step-name validate-jira \
+        --products validated_issues.json opa_input.json \
+        --key ephemeral \
+        --metadata validate-jira.link
   artifacts:
     paths:
       - validate-jira.link
