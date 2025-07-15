@@ -26,11 +26,13 @@ attest-validation:
   stage: attest
   image: python:3.10
   before_script:
-    - pip install --user in-toto
-    - export PATH="$PATH:$(python3 -m site --user-base)/bin"
+    - python3 -m venv venv
+    - . venv/bin/activate
+    - pip install --upgrade pip
+    - pip install in-toto
   script: |
-    python3 -m in_toto.keygen --algorithm ed25519 --name ephemeral
-    in-toto-run --step-name validate-jira \
+    venv/bin/in-toto-keygen --algorithm ed25519 --name ephemeral
+    venv/bin/in-toto-run --step-name validate-jira \
       --products validated_issues.json opa_input.json \
       --key ephemeral \
       --metadata validate-jira.link
