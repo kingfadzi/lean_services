@@ -32,7 +32,7 @@ attest-validation:
     - mv cosign /usr/local/bin/
   script: |
     echo "🔐 Generating ephemeral signing key..."
-    cosign generate-key-pair --yes --output-key cosign.key --output-pub cosign.pub
+    cosign generate-key-pair --output-key cosign.key --output-pub cosign.pub
 
     echo "✍️  Signing opa_input.json..."
     cosign sign-blob --key cosign.key \
@@ -44,6 +44,7 @@ attest-validation:
     paths:
       - opa_input.sig
       - cosign.pub
+
 
 policy-check:
   stage: policy_check
