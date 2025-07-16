@@ -23,17 +23,12 @@ mock-validate-jira:
 
 attest-validation:
   stage: attest
-  image: cgr.dev/chainguard/cosign:latest
+  image: ghcr.io/sigstore/cosign:latest
   script: |
-    echo "🔐 Generating ephemeral signing key..."
     cosign generate-key-pair --yes --output-key cosign.key --output-pub cosign.pub
-
-    echo "✍️  Signing opa_input.json..."
     cosign sign-blob --key cosign.key \
       --output-signature opa_input.sig \
       opa_input.json
-
-    echo "✅ Signature complete."
   artifacts:
     paths:
       - opa_input.sig
