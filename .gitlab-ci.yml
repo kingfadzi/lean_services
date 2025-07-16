@@ -9,7 +9,7 @@ stages:
 variables:
   OPA_URL: "http://mars.butterflycluster.com:8181/v1/data/pipeline/allow"
   SERVICENOW_URL: "https://$SERVICENOW_INSTANCE.service-now.com/api/now/table/change_request"
-  IN_TOTO_KEY: "$IN_TOTO_KEY"
+  VAULT_ADDR: "https://phobos.butterflycluster.com:8200"
   GIT_STRATEGY: clone
 
 mock-validate-jira:
@@ -26,24 +26,24 @@ attest-validation:
   stage: attest
   image: python:3.10
   before_script:
+    - apt-get update && apt-get install -y curl jq unzip
     - python3 -m venv venv
     - ./venv/bin/pip install --upgrade pip
     - ./venv/bin/pip install "in-toto[cli]" securesystemslib
-  script:
+    # Fetch private key from Vault
     - |
-      ./venv/bin/python -c "
-      from securesystemslib.interface import generate_and_write_ed25519_keypair
-      generate_and_write_ed25519_keypair('ephemeral')
-      "
-    - ./venv/bin/in-toto-run --step-name validate-jira \
-        --products validated_issues.json opa_input.json \
-        --key ephemeral \
-        --metadata validate-jira.link
+      curl -s \
+        --header "X-Vault-Token: $VAULT_TOKEN" \
+        "$VAULT_ADDR/v1/secret/data/in-toto/key" \
+        | jq -r '.data.data.private_key' > private.pem
+  script: |
+    ./venv/bin/in-toto-run --step-name validate-jira \
+      --products validated_issues.json opa_input.json \
+      --key private.pem \
+      --metadata validate-jira.link
   artifacts:
     paths:
       - validate-jira.link
-      - ephemeral.pub
-
 
 policy-check:
   stage: policy_check
