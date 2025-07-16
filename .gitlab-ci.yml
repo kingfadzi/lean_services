@@ -22,41 +22,36 @@ mock-validate-jira:
       - validated_issues.json
       - opa_input.json
 
-attest-validation:
-  stage: attest
-  image: python:3.10
-  variables:
-    VAULT_ADDR: "https://phobos.butterflycluster.com:8200"
-    VAULT_SKIP_VERIFY: "true"  # only if you're using a self-signed cert
-  before_script:
-    - apt-get update && apt-get install -y curl jq unzip
-    - python3 -m venv venv
-    - ./venv/bin/pip install --upgrade pip
-    - ./venv/bin/pip install "in-toto[cli]" securesystemslib
-    # Retrieve private signing key from Vault
-    - |
-      echo "🔐 Fetching signing key from Vault..."
-      VAULT_KEY=$(curl -s --fail \
-        --header "X-Vault-Token: $VAULT_TOKEN" \
-        "$VAULT_ADDR/v1/secret/data/in-toto/key")
+before_script:
+  - apt-get update && apt-get install -y curl jq unzip
+  - python3 -m venv venv
+  - ./venv/bin/pip install --upgrade pip
+  - ./venv/bin/pip install "in-toto[cli]" securesystemslib
 
-      echo "$VAULT_KEY" | jq -r '.data.data.private_key' > private.pem
+  # Debug Vault env
+  - echo "🔧 VAULT_ADDR=$VAULT_ADDR"
+  - echo "🔧 VAULT_SKIP_VERIFY=$VAULT_SKIP_VERIFY"
+  - echo "🔧 VAULT_TOKEN is ${#VAULT_TOKEN} characters long"
 
-      if [ ! -s private.pem ]; then
-        echo "❌ ERROR: Failed to retrieve or parse Vault key." >&2
+  # Try hitting Vault with explicit fail on error
+  - |
+    echo "🔐 Fetching private key from Vault..."
+    VAULT_KEY=$(curl --fail -sS \
+      --header "X-Vault-Token: $VAULT_TOKEN" \
+      "$VAULT_ADDR/v1/secret/data/in-toto/key") || {
+        echo "❌ ERROR: Vault request failed (bad token? wrong address?). Exiting."
         exit 1
-      fi
+      }
 
-      echo "✅ Private key retrieved and saved to private.pem"
-  script: |
-    echo "🔏 Running in-toto attestation"
-    ./venv/bin/in-toto-run --step-name validate-jira \
-      --products validated_issues.json opa_input.json \
-      --key private.pem \
-      --metadata validate-jira.link
-  artifacts:
-    paths:
-      - validate-jira.link
+    echo "$VAULT_KEY" | jq -r '.data.data.private_key' > private.pem
+
+    if [ ! -s private.pem ]; then
+      echo "❌ ERROR: Vault response did not contain a usable private key"
+      echo "$VAULT_KEY" | jq .
+      exit 1
+    fi
+
+    echo "✅ Retrieved and saved private.pem"
 
 
 policy-check:
