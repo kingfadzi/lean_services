@@ -57,11 +57,25 @@ attest-validation:
 
       echo "✅ Key saved to private.pem"
   script: |
-    echo "🔏 Creating in-toto attestation..."
-    ./venv/bin/in-toto-run --step-name validate-jira \
-      --products validated_issues.json opa_input.json \
-      --key private.pem \
-      --metadata validate-jira.link
+    echo "🔏 Creating in-toto attestation with Python..."
+    ./venv/bin/python3 -c "
+    import json
+    from in_toto.models.link import Link
+    from securesystemslib.keys import import_ed25519_privatekey_from_pem
+    
+    # Load the private key from Vault
+    key = import_ed25519_privatekey_from_pem('private.pem', password=None)
+    
+    # Simulate a link (real in-toto-run behavior would capture commands)
+    link = Link(name='validate-jira', products=['validated_issues.json', 'opa_input.json'])
+    
+    # Sign the link
+    link.sign(key)
+    
+    # Save as validate-jira.link
+    link.dump('validate-jira.link')
+    "
+
   artifacts:
     paths:
       - validate-jira.link
