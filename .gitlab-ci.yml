@@ -36,9 +36,8 @@ attest-validation:
     cosign generate-key-pair
 
     echo "✍️  Signing opa_input.json..."
-    cosign sign-blob --key cosign.key \
-      --output-signature opa_input.sig \
-      opa_input.json
+    cosign sign-blob --key cosign.key --output-signature opa_input.sig --tlog-upload=false opa_input.json
+
 
     echo "✅ Signature complete."
   artifacts:
