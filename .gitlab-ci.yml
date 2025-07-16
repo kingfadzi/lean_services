@@ -32,7 +32,6 @@ attest-validation:
     - mv cosign /usr/local/bin/
   script: |
     echo "🔐 Generating ephemeral signing key..."
-    # Generate key-pair (outputs cosign.key and cosign.pub in current directory)
     cosign generate-key-pair
 
     echo "✍️  Signing opa_input.json..."
@@ -40,13 +39,15 @@ attest-validation:
     echo "✅ Signature complete."
   artifacts:
     paths:
+      - opa_input.json
       - opa_input.sig
       - cosign.pub
-      - opa_input.json
 
 policy-check:
   stage: policy_check
   image: alpine:3.20
+  dependencies:
+    - attest-validation
   before_script:
     - apk add --no-cache curl jq
     - COSIGN_VERSION=$(curl -s https://api.github.com/repos/sigstore/cosign/releases/latest | jq -r .tag_name)
@@ -55,6 +56,8 @@ policy-check:
     - mv cosign /usr/local/bin/
   script: |
     echo "🔍 Verifying signature before policy check..."
+    ls -lh
+    sha256sum opa_input.json opa_input.sig || true
     cosign verify-blob --offline --key cosign.pub --signature opa_input.sig opa_input.json
 
     echo "✅ Signature verified. Sending input to OPA..."
@@ -64,7 +67,6 @@ policy-check:
   artifacts:
     paths:
       - opa_result.json
-
 
 request-cr:
   stage: change_request
