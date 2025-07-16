@@ -65,7 +65,7 @@ policy-check:
     cat opa_input.json | jq '{input: .}' > wrapped_input.json
     curl -s -X POST -H "Content-Type: application/json" -d @wrapped_input.json $OPA_URL > opa_result.json
     cat opa_result.json
-    jq '.result.allow' opa_result.json | grep true || exit 1
+    jq -e '.result == true' opa_result.json || exit 1
   artifacts:
     paths:
       - opa_result.json
