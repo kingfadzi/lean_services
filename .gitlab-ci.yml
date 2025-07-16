@@ -9,8 +9,6 @@ stages:
 variables:
   OPA_URL: "http://mars.butterflycluster.com:8181/v1/data/pipeline/allow"
   SERVICENOW_URL: "https://$SERVICENOW_INSTANCE.service-now.com/api/now/table/change_request"
-  VAULT_ADDR: "https://phobos.butterflycluster.com:8200"
-  VAULT_SKIP_VERIFY: "true"  # Set to "false" when using a valid TLS cert
   GIT_STRATEGY: clone
 
 mock-validate-jira:
@@ -25,64 +23,33 @@ mock-validate-jira:
 
 attest-validation:
   stage: attest
-  image: python:3.10
-  before_script:
-    - apt-get update && apt-get install -y curl jq unzip
-    - python3 -m venv venv
-    - ./venv/bin/pip install --upgrade pip
-    - ./venv/bin/pip install "in-toto[cli]" securesystemslib
-
-    # 🔍 Debug Vault env variables
-    - echo "🔧 VAULT_ADDR=$VAULT_ADDR"
-    - echo "🔧 VAULT_SKIP_VERIFY=$VAULT_SKIP_VERIFY"
-    - echo "🔧 VAULT_TOKEN is ${#VAULT_TOKEN} characters long"
-
-    # 🔐 Fetch private key from Vault
-    - |
-      echo "🔐 Retrieving signing key from Vault..."
-      VAULT_KEY=$(curl -k --fail -sS \
-        --header "X-Vault-Token: $VAULT_TOKEN" \
-        "$VAULT_ADDR/v1/secret/data/in-toto/key") || {
-          echo "❌ ERROR: Vault request failed. Check token, address, or Vault policies."
-          exit 1
-        }
-
-      echo "$VAULT_KEY" | jq -r '.data.data.private_key' > private.pem
-
-      if [ ! -s private.pem ]; then
-        echo "❌ ERROR: Vault response did not contain a valid 'private_key'."
-        echo "$VAULT_KEY" | jq .
-        exit 1
-      fi
-
-      echo "✅ Key saved to private.pem"
+  image: cgr.dev/chainguard/cosign:latest
   script: |
-    echo "🔏 Creating in-toto attestation with Python..."
-    ./venv/bin/python3 -c "
-    import json
-    from in_toto.models.link import Link
-    from securesystemslib.keys import import_ed25519_privatekey_from_pem
-    
-    # Load the private key from Vault
-    key = import_ed25519_privatekey_from_pem('private.pem', password=None)
-    
-    # Simulate a link (real in-toto-run behavior would capture commands)
-    link = Link(name='validate-jira', products=['validated_issues.json', 'opa_input.json'])
-    
-    # Sign the link
-    link.sign(key)
-    
-    # Save as validate-jira.link
-    link.dump('validate-jira.link')
-    "
+    echo "🔐 Generating ephemeral signing key..."
+    cosign generate-key-pair --yes --output-key cosign.key --output-pub cosign.pub
 
+    echo "✍️  Signing opa_input.json..."
+    cosign sign-blob --key cosign.key \
+      --output-signature opa_input.sig \
+      opa_input.json
+
+    echo "✅ Signature complete."
   artifacts:
     paths:
-      - validate-jira.link
+      - opa_input.sig
+      - cosign.pub
 
 policy-check:
   stage: policy_check
+  image: cgr.dev/chainguard/cosign:latest
   script: |
+    echo "🔍 Verifying signature before policy check..."
+    cosign verify-blob \
+      --key cosign.pub \
+      --signature opa_input.sig \
+      opa_input.json
+
+    echo "✅ Signature verified. Sending input to OPA..."
     curl -s -X POST -H "Content-Type: application/json" -d @opa_input.json $OPA_URL > opa_result.json
     cat opa_result.json
     jq '.result.allow' opa_result.json | grep true || exit 1
