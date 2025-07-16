@@ -10,6 +10,7 @@ variables:
   OPA_URL: "http://mars.butterflycluster.com:8181/v1/data/pipeline/allow"
   SERVICENOW_URL: "https://$SERVICENOW_INSTANCE.service-now.com/api/now/table/change_request"
   VAULT_ADDR: "https://phobos.butterflycluster.com:8200"
+  VAULT_SKIP_VERIFY: "true"  # Set to "false" when using a valid TLS cert
   GIT_STRATEGY: clone
 
 mock-validate-jira:
@@ -22,37 +23,48 @@ mock-validate-jira:
       - validated_issues.json
       - opa_input.json
 
-before_script:
-  - apt-get update && apt-get install -y curl jq unzip
-  - python3 -m venv venv
-  - ./venv/bin/pip install --upgrade pip
-  - ./venv/bin/pip install "in-toto[cli]" securesystemslib
+attest-validation:
+  stage: attest
+  image: python:3.10
+  before_script:
+    - apt-get update && apt-get install -y curl jq unzip
+    - python3 -m venv venv
+    - ./venv/bin/pip install --upgrade pip
+    - ./venv/bin/pip install "in-toto[cli]" securesystemslib
 
-  # Debug Vault env
-  - echo "🔧 VAULT_ADDR=$VAULT_ADDR"
-  - echo "🔧 VAULT_SKIP_VERIFY=$VAULT_SKIP_VERIFY"
-  - echo "🔧 VAULT_TOKEN is ${#VAULT_TOKEN} characters long"
+    # 🔍 Debug Vault env variables
+    - echo "🔧 VAULT_ADDR=$VAULT_ADDR"
+    - echo "🔧 VAULT_SKIP_VERIFY=$VAULT_SKIP_VERIFY"
+    - echo "🔧 VAULT_TOKEN is ${#VAULT_TOKEN} characters long"
 
-  # Try hitting Vault with explicit fail on error
-  - |
-    echo "🔐 Fetching private key from Vault..."
-    VAULT_KEY=$(curl --fail -sS \
-      --header "X-Vault-Token: $VAULT_TOKEN" \
-      "$VAULT_ADDR/v1/secret/data/in-toto/key") || {
-        echo "❌ ERROR: Vault request failed (bad token? wrong address?). Exiting."
+    # 🔐 Fetch private key from Vault
+    - |
+      echo "🔐 Retrieving signing key from Vault..."
+      VAULT_KEY=$(curl --fail -sS \
+        --header "X-Vault-Token: $VAULT_TOKEN" \
+        "$VAULT_ADDR/v1/secret/data/in-toto/key") || {
+          echo "❌ ERROR: Vault request failed. Check token, address, or Vault policies."
+          exit 1
+        }
+
+      echo "$VAULT_KEY" | jq -r '.data.data.private_key' > private.pem
+
+      if [ ! -s private.pem ]; then
+        echo "❌ ERROR: Vault response did not contain a valid 'private_key'."
+        echo "$VAULT_KEY" | jq .
         exit 1
-      }
+      fi
 
-    echo "$VAULT_KEY" | jq -r '.data.data.private_key' > private.pem
-
-    if [ ! -s private.pem ]; then
-      echo "❌ ERROR: Vault response did not contain a usable private key"
-      echo "$VAULT_KEY" | jq .
-      exit 1
-    fi
-
-    echo "✅ Retrieved and saved private.pem"
-
+      echo "✅ Key saved to private.pem"
+  script: |
+    echo "🔏 Creating in-toto attestation..."
+    ./venv/bin/in-toto-run --step-name validate-jira \
+      --products validated_issues.json opa_input.json \
+      --key private.pem \
+      --metadata validate-jira.link
+  artifacts:
+    paths:
+      - validate-jira.link
 
 policy-check:
   stage: policy_check
