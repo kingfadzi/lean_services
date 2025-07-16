@@ -55,10 +55,7 @@ policy-check:
     - mv cosign /usr/local/bin/
   script: |
     echo "🔍 Verifying signature before policy check..."
-    cosign verify-blob \
-      --key cosign.pub \
-      --signature opa_input.sig \
-      opa_input.json
+    cosign verify-blob --offline --key cosign.pub --signature opa_input.sig opa_input.json
 
     echo "✅ Signature verified. Sending input to OPA..."
     curl -s -X POST -H "Content-Type: application/json" -d @opa_input.json $OPA_URL > opa_result.json
