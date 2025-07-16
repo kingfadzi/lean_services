@@ -42,7 +42,7 @@ attest-validation:
     paths:
       - opa_input.sig
       - cosign.pub
-
+      - opa_input.json
 
 policy-check:
   stage: policy_check
