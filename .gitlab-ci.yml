@@ -15,7 +15,8 @@ mock-validate-jira:
   stage: validate
   script: |
     echo '{ "ticket": "DASH-123", "status": "Open", "type": "Story" }' > validated_issues.json
-    echo '{ "validated_jira": true, "has_high_severity": false, "license_compliant": true }' > opa_input.json
+    echo '{ "input": { "validated_jira": true, "has_high_severity": false, "license_compliant": true } }' > opa_input.json
+
   artifacts:
     paths:
       - validated_issues.json
@@ -61,7 +62,8 @@ policy-check:
     cosign verify-blob --offline --key cosign.pub --signature opa_input.sig --insecure-ignore-tlog opa_input.json
 
     echo "✅ Signature verified. Sending input to OPA..."
-    curl -s -X POST -H "Content-Type: application/json" -d @opa_input.json $OPA_URL > opa_result.json
+    cat opa_input.json | jq '{input: .}' > wrapped_input.json
+    curl -s -X POST -H "Content-Type: application/json" -d @wrapped_input.json $OPA_URL > opa_result.json
     cat opa_result.json
     jq '.result.allow' opa_result.json | grep true || exit 1
   artifacts:
