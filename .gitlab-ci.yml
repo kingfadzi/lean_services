@@ -40,7 +40,7 @@ attest-validation:
     # 🔐 Fetch private key from Vault
     - |
       echo "🔐 Retrieving signing key from Vault..."
-      VAULT_KEY=$(curl --fail -sS \
+      VAULT_KEY=$(curl -k --fail -sS \
         --header "X-Vault-Token: $VAULT_TOKEN" \
         "$VAULT_ADDR/v1/secret/data/in-toto/key") || {
           echo "❌ ERROR: Vault request failed. Check token, address, or Vault policies."
