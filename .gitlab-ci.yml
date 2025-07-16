@@ -25,18 +25,31 @@ mock-validate-jira:
 attest-validation:
   stage: attest
   image: python:3.10
+  variables:
+    VAULT_ADDR: "https://phobos.butterflycluster.com:8200"
+    VAULT_SKIP_VERIFY: "true"  # only if you're using a self-signed cert
   before_script:
     - apt-get update && apt-get install -y curl jq unzip
     - python3 -m venv venv
     - ./venv/bin/pip install --upgrade pip
     - ./venv/bin/pip install "in-toto[cli]" securesystemslib
-    # Fetch private key from Vault
+    # Retrieve private signing key from Vault
     - |
-      curl -s \
+      echo "🔐 Fetching signing key from Vault..."
+      VAULT_KEY=$(curl -s --fail \
         --header "X-Vault-Token: $VAULT_TOKEN" \
-        "$VAULT_ADDR/v1/secret/data/in-toto/key" \
-        | jq -r '.data.data.private_key' > private.pem
+        "$VAULT_ADDR/v1/secret/data/in-toto/key")
+
+      echo "$VAULT_KEY" | jq -r '.data.data.private_key' > private.pem
+
+      if [ ! -s private.pem ]; then
+        echo "❌ ERROR: Failed to retrieve or parse Vault key." >&2
+        exit 1
+      fi
+
+      echo "✅ Private key retrieved and saved to private.pem"
   script: |
+    echo "🔏 Running in-toto attestation"
     ./venv/bin/in-toto-run --step-name validate-jira \
       --products validated_issues.json opa_input.json \
       --key private.pem \
@@ -44,6 +57,7 @@ attest-validation:
   artifacts:
     paths:
       - validate-jira.link
+
 
 policy-check:
   stage: policy_check
