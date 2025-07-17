@@ -105,45 +105,45 @@ request-cr:
 wait-for-approval:
   stage: approval
   image: registry.access.redhat.com/ubi8/ubi:latest
-  dependencies:
-    - request-cr
   before_script:
-    - dnf install -y jq curl || yum install -y jq curl
+    - yum install -y jq curl
   script: |
     echo "⏳ Waiting for Change Request approval in ServiceNow..."
 
     CR_SYS_ID=$(jq -r '.result.sys_id' cr_response.json)
-
     if [ -z "$CR_SYS_ID" ] || [ "$CR_SYS_ID" == "null" ]; then
-      echo "❌ Failed to extract sys_id from ServiceNow response."
-      cat cr_response.json
-      exit 1
+      echo "❌ Could not extract sys_id from cr_response.json"; cat cr_response.json; exit 1
     fi
-
     echo "🔍 Monitoring CR sys_id: $CR_SYS_ID"
 
-    for i in {1..40}; do
-      CR_STATUS=$(curl -s -u "$SERVICENOW_USERNAME:$SERVICENOW_PASSWORD" \
+    APPROVED_STATES=("3" "4" "5" "6")
+    MAX_CHECKS=30
+    INTERVAL=10
+
+    for ((i=1;i<=MAX_CHECKS;i++)); do
+      NOW=$(date '+%Y-%m-%dT%H:%M:%S')
+      STATE=$(curl -s -u "$SERVICENOW_USERNAME:$SERVICENOW_PASSWORD" \
         "$SERVICENOW_URL/$CR_SYS_ID" | jq -r '.result.state')
 
-      case "$CR_STATUS" in
-        "3")
-          echo "✅ Change Request approved. Proceeding with deployment."
-          exit 0
-          ;;
-        "4")
-          echo "❌ Change Request rejected. Halting pipeline."
-          exit 1
-          ;;
-        *)
-          echo "🔁 Current CR state: $CR_STATUS. Waiting..."
-          sleep 30
-          ;;
-      esac
+      echo "[$NOW] 🔁 Check #$i: CR state = $STATE"
+
+      if [[ " ${APPROVED_STATES[@]} " =~ " ${STATE} " ]]; then
+        echo "✅ CR has reached an approved or terminal state (code: $STATE)."
+        exit 0
+      fi
+
+      sleep "$INTERVAL"
     done
 
-    echo "⏰ Timeout waiting for CR approval after 20 minutes."
+    NOW=$(date '+%Y-%m-%dT%H:%M:%S')
+    echo "🔥 [$NOW] Timeout reached after $((MAX_CHECKS * INTERVAL)) seconds. Final CR state = $STATE"
     exit 1
+  dependencies:
+    - request-cr
+  artifacts:
+    paths:
+      - cr_response.json
+
 
 
 deploy:
