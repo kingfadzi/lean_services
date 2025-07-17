@@ -112,23 +112,31 @@ wait-for-approval:
 
     CR_SYS_ID=$(jq -r '.result.sys_id' cr_response.json)
     if [ -z "$CR_SYS_ID" ] || [ "$CR_SYS_ID" == "null" ]; then
-      echo "❌ Could not extract sys_id from cr_response.json"; cat cr_response.json; exit 1
+      echo "❌ Could not extract sys_id from cr_response.json"
+      cat cr_response.json
+      exit 1
     fi
+
     echo "🔍 Monitoring CR sys_id: $CR_SYS_ID"
 
+    # Terminal or approved states (based on instance definitions)
     APPROVED_STATES=("3" "4" "5" "6")
     MAX_CHECKS=30
     INTERVAL=10
 
-    for ((i=1;i<=MAX_CHECKS;i++)); do
+    for ((i=1; i<=MAX_CHECKS; i++)); do
       NOW=$(date '+%Y-%m-%dT%H:%M:%S')
-      STATE=$(curl -s -u "$SERVICENOW_USERNAME:$SERVICENOW_PASSWORD" \
-        "$SERVICENOW_URL/$CR_SYS_ID" | jq -r '.result.state')
 
-      echo "[$NOW] 🔁 Check #$i: CR state = $STATE"
+      RESPONSE=$(curl -s -u "$SERVICENOW_USERNAME:$SERVICENOW_PASSWORD" \
+        "$SERVICENOW_URL/$CR_SYS_ID")
+
+      STATE=$(echo "$RESPONSE" | jq -r '.result.state')
+      LABEL=$(echo "$RESPONSE" | jq -r '.result.u_state_label // "unknown"')
+
+      echo "[$NOW] 🔁 Check #$i: CR state = $STATE (${LABEL})"
 
       if [[ " ${APPROVED_STATES[@]} " =~ " ${STATE} " ]]; then
-        echo "✅ CR has reached an approved or terminal state (code: $STATE)."
+        echo "✅ [$NOW] CR reached approved/terminal state: $STATE (${LABEL})."
         exit 0
       fi
 
@@ -136,7 +144,7 @@ wait-for-approval:
     done
 
     NOW=$(date '+%Y-%m-%dT%H:%M:%S')
-    echo "🔥 [$NOW] Timeout reached after $((MAX_CHECKS * INTERVAL)) seconds. Final CR state = $STATE"
+    echo "🔥 [$NOW] Timeout reached after $((MAX_CHECKS * INTERVAL)) seconds. Final CR state = $STATE (${LABEL})"
     exit 1
   dependencies:
     - request-cr
