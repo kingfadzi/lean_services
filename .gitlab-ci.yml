@@ -119,23 +119,20 @@ wait-for-approval:
 
     echo "🔍 Monitoring CR sys_id: $CR_SYS_ID"
 
-    # These are considered post-approval or terminal states
     APPROVED_STATES=("-1" "0" "3" "4")  # Implement, Review, Closed, Canceled
-    MAX_CHECKS=300
+    MAX_CHECKS=30
     INTERVAL=10
 
     for ((i=1; i<=MAX_CHECKS; i++)); do
       NOW=$(date '+%Y-%m-%dT%H:%M:%S')
       RESPONSE=$(curl -s -u "$SERVICENOW_USERNAME:$SERVICENOW_PASSWORD" \
-        "$SERVICENOW_URL/$CR_SYS_ID?sysparm_display_value=true")
+        "$SERVICENOW_URL/$CR_SYS_ID")
 
-      STATE_NUM=$(echo "$RESPONSE" | jq -r '.result.state.value')
-      STATE_LABEL=$(echo "$RESPONSE" | jq -r '.result.state.display_value')
-
-      echo "[$NOW] 🔁 Check #$i: CR state = $STATE_NUM ($STATE_LABEL)"
+      STATE_NUM=$(echo "$RESPONSE" | jq -r '.result.state')
+      echo "[$NOW] 🔁 Check #$i: CR state = $STATE_NUM"
 
       if [[ " ${APPROVED_STATES[@]} " =~ " ${STATE_NUM} " ]]; then
-        echo "✅ CR has reached an approved or terminal state: $STATE_LABEL ($STATE_NUM)"
+        echo "✅ CR has reached approved or terminal state (code: $STATE_NUM)."
         exit 0
       fi
 
@@ -143,7 +140,7 @@ wait-for-approval:
     done
 
     NOW=$(date '+%Y-%m-%dT%H:%M:%S')
-    echo "🔥 [$NOW] Timeout reached after $((MAX_CHECKS * INTERVAL)) seconds. Final CR state = $STATE_NUM ($STATE_LABEL)"
+    echo "🔥 [$NOW] Timeout reached after $((MAX_CHECKS * INTERVAL)) seconds. Final CR state = $STATE_NUM"
     exit 1
   dependencies:
     - request-cr
