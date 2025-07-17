@@ -91,7 +91,7 @@ request-cr:
     echo "📤 Creating Change Request in ServiceNow..."
     response=$(curl --fail -X POST "$SERVICENOW_URL" \
       -H "Content-Type: application/json" \
-      -H "Authorization: Bearer $SERVICENOW_TOKEN" \
+      -u "$SERVICENOW_USERNAME:$SERVICENOW_PASSWORD" \
       -d @opa_input.json)
 
     echo "✅ Response from ServiceNow:"
