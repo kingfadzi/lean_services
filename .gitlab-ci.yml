@@ -86,14 +86,21 @@ policy-check:
 
 request-cr:
   stage: change_request
+  image: registry.access.redhat.com/ubi8/ubi:latest
   script: |
-    curl -s -X POST "$SERVICENOW_URL" \
+    echo "📤 Creating Change Request in ServiceNow..."
+    response=$(curl --fail -X POST "$SERVICENOW_URL" \
       -H "Content-Type: application/json" \
       -H "Authorization: Bearer $SERVICENOW_TOKEN" \
-      -d @opa_input.json > cr_response.json
+      -d @opa_input.json)
+
+    echo "✅ Response from ServiceNow:"
+    echo "$response" > cr_response.json
+    cat cr_response.json
   artifacts:
     paths:
       - cr_response.json
+
 
 manual-approval:
   stage: approval
