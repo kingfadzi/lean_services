@@ -102,12 +102,48 @@ request-cr:
       - cr_response.json
 
 
-manual-approval:
+wait-for-approval:
   stage: approval
+  image: registry.access.redhat.com/ubi8/ubi:latest
+  dependencies:
+    - request-cr
   script: |
-    echo "Manual approval step, use GitLab UI"
-  when: manual
-  allow_failure: false
+    echo "⏳ Waiting for Change Request approval in ServiceNow..."
+
+    # Extract sys_id from previous response
+    CR_SYS_ID=$(jq -r '.result.sys_id' cr_response.json)
+
+    if [ -z "$CR_SYS_ID" ] || [ "$CR_SYS_ID" == "null" ]; then
+      echo "❌ Failed to extract sys_id from ServiceNow response."
+      cat cr_response.json
+      exit 1
+    fi
+
+    echo "🔍 Monitoring CR sys_id: $CR_SYS_ID"
+
+    for i in {1..40}; do  # Up to 20 minutes with 30s intervals
+      CR_STATUS=$(curl -s -u "$SERVICENOW_USERNAME:$SERVICENOW_PASSWORD" \
+        "$SERVICENOW_URL/$CR_SYS_ID" | jq -r '.result.state')
+
+      case "$CR_STATUS" in
+        "3")  # Approved
+          echo "✅ Change Request approved. Proceeding with deployment."
+          exit 0
+          ;;
+        "4")  # Rejected
+          echo "❌ Change Request rejected. Halting pipeline."
+          exit 1
+          ;;
+        *)
+          echo "🔁 Current CR state: $CR_STATUS. Waiting..."
+          sleep 30
+          ;;
+      esac
+    done
+
+    echo "⏰ Timeout waiting for CR approval after 20 minutes."
+    exit 1
+
 
 deploy:
   stage: deploy
