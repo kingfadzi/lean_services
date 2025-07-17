@@ -107,10 +107,11 @@ wait-for-approval:
   image: registry.access.redhat.com/ubi8/ubi:latest
   dependencies:
     - request-cr
+  before_script:
+    - dnf install -y jq curl || yum install -y jq curl
   script: |
     echo "⏳ Waiting for Change Request approval in ServiceNow..."
 
-    # Extract sys_id from previous response
     CR_SYS_ID=$(jq -r '.result.sys_id' cr_response.json)
 
     if [ -z "$CR_SYS_ID" ] || [ "$CR_SYS_ID" == "null" ]; then
@@ -121,16 +122,16 @@ wait-for-approval:
 
     echo "🔍 Monitoring CR sys_id: $CR_SYS_ID"
 
-    for i in {1..40}; do  # Up to 20 minutes with 30s intervals
+    for i in {1..40}; do
       CR_STATUS=$(curl -s -u "$SERVICENOW_USERNAME:$SERVICENOW_PASSWORD" \
         "$SERVICENOW_URL/$CR_SYS_ID" | jq -r '.result.state')
 
       case "$CR_STATUS" in
-        "3")  # Approved
+        "3")
           echo "✅ Change Request approved. Proceeding with deployment."
           exit 0
           ;;
-        "4")  # Rejected
+        "4")
           echo "❌ Change Request rejected. Halting pipeline."
           exit 1
           ;;
