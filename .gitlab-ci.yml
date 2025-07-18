@@ -12,26 +12,26 @@ stages:
 build:
   extends: .attested_job
   stage: build
-  script:
-    - mkdir -p dist
-    - echo "compiled jar" > dist/output.jar
   variables:
     ARTIFACT_PATH: "dist/output.jar"
+    BUILD_SCRIPT: |
+      mkdir -p dist
+      echo "compiled jar" > dist/output.jar
 
 test:
   extends: .attested_job
   stage: test
-  script:
-    - mkdir -p dist
-    - echo "all tests passed" > dist/test-report.txt
   variables:
     ARTIFACT_PATH: "dist/test-report.txt"
+    BUILD_SCRIPT: |
+      mkdir -p dist
+      echo "all tests passed" > dist/test-report.txt
 
 deploy:
   extends: .attested_job
   stage: deploy
-  script:
-    - mkdir -p dist
-    - echo "deployed to staging" > dist/deploy.log
   variables:
     ARTIFACT_PATH: "dist/deploy.log"
+    BUILD_SCRIPT: |
+      mkdir -p dist
+      echo "deployed to staging" > dist/deploy.log
