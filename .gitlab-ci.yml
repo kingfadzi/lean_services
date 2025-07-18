@@ -9,7 +9,6 @@ stages:
   - test
   - deploy
 
-
 build:
   extends: .attested_job
   stage: build
