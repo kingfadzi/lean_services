@@ -3,7 +3,7 @@ include:
     file: "/templates/gitlab-attest.yml"
     ref: main
 
-  #  This GitLab CI/CD configuration file defines a pipeline with three stages: build, test, and deploy.
+#  This GitLab CI/CD configuration file defines a pipeline with three stages: build, test, and deploy.
 stages:
   - build
   - test
