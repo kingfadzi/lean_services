@@ -18,6 +18,7 @@ build:
       mkdir -p dist
       echo "compiled jar" > dist/output.jar
 
+
 test:
   extends: .attested_job
   stage: test
