@@ -114,25 +114,27 @@ def build_service_app_tree(records, search_term=None):
             print(f"[build] MISSING app_name for: {app_id}")
 
         # Apply search filter if needed
+        # Apply search filter if needed
         if search_term:
             searchable = " ".join([
-                rec_dict.get("service_name", ""),
-                rec_dict.get("app_name", ""),
-                rec_dict.get("instance_name", ""),
-                rec_dict.get("jira_backlog_id", ""),
-                rec_dict.get("environment", ""),
-                rec_dict.get("install_type", ""),
-                rec_dict.get("application_type", ""),
-                rec_dict.get("application_tier", ""),
-                rec_dict.get("architecture_type", ""),
-                rec_dict.get("service_id", ""),
-                rec_dict.get("app_id", ""),
-                rec_dict.get("instance_id", ""),
-                rec_dict.get("lean_control_service_id", ""),
+                str(rec_dict.get("service_name", "") or ""),
+                str(rec_dict.get("app_name", "") or ""),
+                str(rec_dict.get("instance_name", "") or ""),
+                str(rec_dict.get("jira_backlog_id", "") or ""),
+                str(rec_dict.get("environment", "") or ""),
+                str(rec_dict.get("install_type", "") or ""),
+                str(rec_dict.get("application_type", "") or ""),
+                str(rec_dict.get("application_tier", "") or ""),
+                str(rec_dict.get("architecture_type", "") or ""),
+                str(rec_dict.get("service_id", "") or ""),
+                str(rec_dict.get("app_id", "") or ""),
+                str(rec_dict.get("instance_id", "") or ""),
+                str(rec_dict.get("lean_control_service_id", "") or ""),
             ]).lower()
 
             if search_term.lower() not in searchable:
                 continue
+
 
         services[lcs_id]["apps"][app_id]["app_name"] = rec_dict["app_name"]
         services[lcs_id]["apps"][app_id]["instances"].append(rec_dict)
