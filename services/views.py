@@ -19,7 +19,10 @@ def fetch_records(mode):
                 si.it_service_instance,
                 si.environment,
                 si.install_type,
-                child_app.application_parent_correlation_id
+                child_app.application_parent_correlation_id,
+                child_app.application_type,
+                child_app.application_tier,
+                child_app.architecture_type
             FROM public.vwsfitbusinessservice AS bs
             JOIN public.lean_control_application AS lca
               ON lca.servicenow_app_id = bs.service_correlation_id
@@ -46,7 +49,10 @@ def fetch_records(mode):
                 si.it_service_instance,
                 si.environment,
                 si.install_type,
-                bac.application_parent_correlation_id
+                bac.application_parent_correlation_id,
+                bac.application_type,
+                bac.application_tier,
+                bac.architecture_type
             FROM public.vwsfitserviceinstance AS si
             JOIN public.lean_control_application AS fia
               ON fia.servicenow_app_id = si.correlation_id
@@ -81,7 +87,10 @@ def fetch_records(mode):
             iname=row[7],
             env=row[8],
             install_type=row[9],
-            parent_app_id=row[10]
+            parent_app_id=row[10],
+            app_type=row[11],
+            app_tier=row[12],
+            arch_type=row[13]
         )
         for row in rows
     ]
@@ -107,22 +116,23 @@ def build_service_app_tree(records, search_term=None):
         # Apply search filter if needed
         if search_term:
             searchable = " ".join([
-                rec_dict.get("service_name", ""),              # bs.service
-                rec_dict.get("app_name", ""),                  # business_application_name
-                rec_dict.get("instance_name", ""),             # it_service_instance
-                rec_dict.get("jira_backlog_id", ""),           # jira_backlog_id
-                rec_dict.get("environment", ""),               # environment
-                rec_dict.get("install_type", ""),              # install_type
-
-                rec_dict.get("service_id", ""),                # bs.service_correlation_id
-                rec_dict.get("app_id", ""),                    # correlation_id
-                rec_dict.get("instance_id", ""),               # si.correlation_id
-                rec_dict.get("lean_control_service_id", ""),   # lean_control_service_id
+                rec_dict.get("service_name", ""),
+                rec_dict.get("app_name", ""),
+                rec_dict.get("instance_name", ""),
+                rec_dict.get("jira_backlog_id", ""),
+                rec_dict.get("environment", ""),
+                rec_dict.get("install_type", ""),
+                rec_dict.get("application_type", ""),
+                rec_dict.get("application_tier", ""),
+                rec_dict.get("architecture_type", ""),
+                rec_dict.get("service_id", ""),
+                rec_dict.get("app_id", ""),
+                rec_dict.get("instance_id", ""),
+                rec_dict.get("lean_control_service_id", ""),
             ]).lower()
 
             if search_term.lower() not in searchable:
                 continue
-
 
         services[lcs_id]["apps"][app_id]["app_name"] = rec_dict["app_name"]
         services[lcs_id]["apps"][app_id]["instances"].append(rec_dict)

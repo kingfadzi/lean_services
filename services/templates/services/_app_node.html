@@ -1,35 +1,38 @@
 {% load tree_extras %}
 
 {% with app=tree|get_item:app_id %}
-{% if app %}
-<details>
-    <summary>{{ app|get_key:"app_name" }} ({{ app_id }})</summary>
+    {% if app %}
+        <details>
+            <summary>{{ app|get_key:"app_name" }} ({{ app_id }})</summary>
 
-    {% if app.instances %}
-    <ul>
-        {% for inst in app.instances %}
-        <li class="instance">
-            <strong>{{ inst.instance_name|default:"Unnamed" }}</strong>
-            <div class="instance-meta">
-                Env: {{ inst.environment|default:"" }} |
-                Install: {{ inst.install_type|default:"" }}<br>
-                Service: {{ inst.service_name|default:"" }} |
-                Jira: {{ inst.jira_backlog_id|default:"" }}
-            </div>
-        </li>
-        {% endfor %}
-    </ul>
-    {% endif %}
+            {% if app.instances %}
+                <ul>
+                    {% for inst in app.instances %}
+                        <li class="instance">
+                            <strong>{{ inst.instance_name|default:"Unnamed" }}</strong>
+                            <ul class="instance-meta text-sm text-gray-700 pl-4 list-disc space-y-1 mt-1">
+                                <li>Environment: {{ inst.environment|default:"" }}</li>
+                                <li>Install Type: {{ inst.install_type|default:"" }}</li>
+                                <li>Service: {{ inst.service_name|default:"" }}</li>
+                                <li>Jira Backlog: {{ inst.jira_backlog_id|default:"" }}</li>
+                                <li>Application Type: {{ inst.application_type|default:"" }}</li>
+                                <li>Application Tier: {{ inst.application_tier|default:"" }}</li>
+                                <li>Architecture Type: {{ inst.architecture_type|default:"" }}</li>
+                            </ul>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
 
-    {% if app.children %}
-    <ul>
-        {% for child_id in app.children %}
-        <li>
-            {% include "services/_app_node.html" with app_id=child_id tree=tree %}
-        </li>
-        {% endfor %}
-    </ul>
+            {% if app.children %}
+                <ul>
+                    {% for child_id in app.children %}
+                        <li>
+                            {% include "services/_app_node.html" with app_id=child_id tree=tree %}
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        </details>
     {% endif %}
-</details>
-{% endif %}
 {% endwith %}
