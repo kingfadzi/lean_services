@@ -3,6 +3,7 @@ from django.db import connection
 from collections import defaultdict
 from .models import ServiceInstanceRecord
 from django.core.paginator import Paginator
+import pandas as pd
 
 
 def fetch_records(mode):
@@ -33,8 +34,6 @@ def fetch_records(mode):
              AND lpbd.is_parent = TRUE
             JOIN public.vwsfbusinessapplication AS child_app
               ON si.business_application_sysid = child_app.business_application_sys_id
-            LEFT JOIN public.vwsfbusinessapplication AS parent_app
-              ON child_app.application_parent_correlation_id = parent_app.correlation_id
         """
     else:
         query = """
@@ -75,108 +74,46 @@ def fetch_records(mode):
         cursor.execute(query)
         rows = cursor.fetchall()
 
-    return [
-        ServiceInstanceRecord(
-            lcs_id=row[0],
-            jira=row[1],
-            sid=row[2],
-            sname=row[3],
-            aid=row[4],
-            aname=row[5],
-            iid=row[6],
-            iname=row[7],
-            env=row[8],
-            install_type=row[9],
-            parent_app_id=row[10],
-            app_type=row[11],
-            app_tier=row[12],
-            arch_type=row[13]
-        )
-        for row in rows
+    columns = [
+        "lean_control_service_id", "jira_backlog_id", "service_id", "service_name",
+        "app_id", "app_name", "instance_id", "instance_name", "environment", "install_type",
+        "parent_app_id", "application_type", "application_tier", "architecture_type"
     ]
+    return pd.DataFrame(rows, columns=columns)
 
 
-def build_service_app_tree(records, search_term=None):
-    services = defaultdict(
-        lambda: {"apps": defaultdict(lambda: {"app_name": None, "instances": [], "children": []})}
-    )
+def build_service_app_tree(df, search_term=None):
+    if search_term:
+        search_term = search_term.lower()
+        df = df[df.apply(lambda row: search_term in str(row.values).lower(), axis=1)]
+
+    services = {}
     roots = []
 
-    for rec in records:
-        rec_dict = rec.__dict__
-        lcs_id = rec_dict["lean_control_service_id"]
-        app_id = rec_dict["app_id"]
-        parent_id = rec_dict.get("parent_app_id")
+    for lcs_id, service_df in df.groupby("lean_control_service_id"):
+        apps = defaultdict(lambda: {
+            "app_name": None,
+            "instances": [],
+            "children": [],
+            "parent": None  # used by your template
+        })
 
-        print(f"[build] LCS: {lcs_id}, App: {app_id}, Parent: {parent_id}")
+        for _, row in service_df.iterrows():
+            app_id = row["app_id"]
+            parent_id = row["parent_app_id"]
 
-        if not rec_dict["app_name"]:
-            print(f"[build] MISSING app_name for: {app_id}")
+            app = apps[app_id]
+            app["app_name"] = row["app_name"]
+            app["instances"].append(row.to_dict())
+            app["parent"] = parent_id
 
-        # Apply search filter if needed
-        # Apply search filter if needed
-        if search_term:
-            searchable = " ".join([
-                str(rec_dict.get("service_name", "") or ""),
-                str(rec_dict.get("app_name", "") or ""),
-                str(rec_dict.get("instance_name", "") or ""),
-                str(rec_dict.get("jira_backlog_id", "") or ""),
-                str(rec_dict.get("environment", "") or ""),
-                str(rec_dict.get("install_type", "") or ""),
-                str(rec_dict.get("application_type", "") or ""),
-                str(rec_dict.get("application_tier", "") or ""),
-                str(rec_dict.get("architecture_type", "") or ""),
-                str(rec_dict.get("service_id", "") or ""),
-                str(rec_dict.get("app_id", "") or ""),
-                str(rec_dict.get("instance_id", "") or ""),
-                str(rec_dict.get("lean_control_service_id", "") or ""),
-            ]).lower()
+            if parent_id:
+                apps[parent_id]["children"].append(app_id)
 
-            if search_term.lower() not in searchable:
-                continue
-
-
-        services[lcs_id]["apps"][app_id]["app_name"] = rec_dict["app_name"]
-        services[lcs_id]["apps"][app_id]["instances"].append(rec_dict)
-
-        if parent_id:
-            services[lcs_id]["apps"][parent_id]["children"].append(app_id)
-
-        if lcs_id not in roots:
-            roots.append(lcs_id)
+        services[lcs_id] = {"apps": dict(apps)}
+        roots.append(lcs_id)
 
     return {"services": services, "roots": roots}
-
-
-def filter_service_tree(tree_data, search_term):
-    if not search_term:
-        return tree_data
-
-    search = search_term.lower()
-    filtered_services = {}
-    roots = []
-
-    for lcs_id, service in tree_data["services"].items():
-        filtered_apps = {}
-        for app_id, app in service["apps"].items():
-            matching_instances = [
-                inst for inst in app["instances"]
-                if any(search in str(value).lower() for value in inst.values())
-            ]
-            if matching_instances or app["children"]:
-                filtered_apps[app_id] = {
-                    "app_name": app["app_name"],
-                    "instances": matching_instances,
-                    "children": app["children"]
-                }
-        if filtered_apps:
-            filtered_services[lcs_id] = {"apps": filtered_apps}
-            roots.append(lcs_id)
-
-    return {
-        "services": filtered_services,
-        "roots": roots
-    }
 
 
 def service_tree_view(request):
@@ -184,8 +121,8 @@ def service_tree_view(request):
     search = request.GET.get("search", "").strip()
     page_number = request.GET.get("page", 1)
 
-    records = fetch_records(mode)
-    tree_data = build_service_app_tree(records, search_term=search)
+    df = fetch_records(mode)
+    tree_data = build_service_app_tree(df, search_term=search)
 
     roots = tree_data["roots"]
     paginator = Paginator(roots, 10)
