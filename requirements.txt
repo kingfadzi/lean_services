@@ -5,3 +5,9 @@ pandas
 in-toto[cli]
 ed25519
 requests
+
+aioodbc
+asyncpg
+PyYAML
+tenacity
+filelock

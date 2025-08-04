@@ -1,0 +1,15 @@
+databases:
+  - name: sqlserver_migration
+    source_type: sqlserver
+    source_db: "DSN=sqlserver_source"
+    target_db: postgresql://user:pass@host/db
+    tables:
+      - source: dbo.component_tool_mapping
+        dest: public.component_mapping
+        sort_columns: [created_at, id]
+        where: "mapping_type = 'it_business_application' OR mapping_type = 'version_control' OR mapping_type = 'work_management'"
+        enabled: true
+        post_ddl_file: "metadata/sql/component_mapping_repo_id.sql"
+        transforms:
+          plugins:
+            - "metadata.transformers.component_mapping_repo_id.extract_git_coordinates"
