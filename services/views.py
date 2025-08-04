@@ -90,30 +90,51 @@ def build_service_app_tree(df, search_term=None):
     services = {}
     roots = []
 
+    # Build a global map of all app metadata
+    app_meta = (
+        df[["app_id", "app_name", "application_type", "application_tier", "architecture_type"]]
+        .drop_duplicates("app_id")
+        .set_index("app_id")
+        .to_dict("index")
+    )
+
     for lcs_id, service_df in df.groupby("lean_control_service_id"):
         apps = defaultdict(lambda: {
             "app_name": None,
+            "application_type": None,
+            "application_tier": None,
+            "architecture_type": None,
             "instances": [],
             "children": [],
-            "parent": None  # used by your template
+            "parent": None
         })
 
         for _, row in service_df.iterrows():
             app_id = row["app_id"]
             parent_id = row["parent_app_id"]
 
+            # Populate app info
             app = apps[app_id]
-            app["app_name"] = row["app_name"]
+            app.update(app_meta.get(app_id, {}))
             app["instances"].append(row.to_dict())
             app["parent"] = parent_id
 
+            # Ensure parent exists in map with metadata
             if parent_id:
-                apps[parent_id]["children"].append(app_id)
+                parent_app = apps[parent_id]
+                parent_app.update(app_meta.get(parent_id, {}))
+                parent_app["children"].append(app_id)
 
         services[lcs_id] = {"apps": dict(apps)}
-        roots.append(lcs_id)
+
+        # Find top-level apps for this service
+        root_apps = [aid for aid, a in apps.items() if not a["parent"]]
+        for app_id in root_apps:
+            roots.append((lcs_id, app_id))
 
     return {"services": services, "roots": roots}
+
+
 
 
 def service_tree_view(request):
@@ -124,12 +145,15 @@ def service_tree_view(request):
     df = fetch_records(mode)
     tree_data = build_service_app_tree(df, search_term=search)
 
-    roots = tree_data["roots"]
+    roots = tree_data["roots"]  # <-- [(lcs_id, app_id)]
     paginator = Paginator(roots, 10)
     page_obj = paginator.get_page(page_number)
     page_roots = page_obj.object_list
 
-    paginated_services = {sid: tree_data["services"][sid] for sid in page_roots}
+    paginated_services = {
+        lcs_id: tree_data["services"][lcs_id]
+        for (lcs_id, _) in page_roots
+    }
 
     return render(request, "services/service_tree.html", {
         "lcs_services": paginated_services,

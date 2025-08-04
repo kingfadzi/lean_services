@@ -53,38 +53,34 @@
 </form>
 
 {% if lcs_services %}
-{% for lcs_id in page_roots %}
-{% with service=lcs_services|get_item:lcs_id %}
-<details open>
-    <summary>Lean Control Service: {{ lcs_id }}</summary>
-    <ul>
-        {% for app_id in service.apps %}
-        {% with app=service.apps|get_item:app_id %}
-        {% if not app.parent|default:False %}
-        <li>
-            {% include "services/_app_node.html" with app_id=app_id tree=service.apps %}
-        </li>
-        {% endif %}
+    {% for root in page_roots %}
+        {% with lcs_id=root.0 app_id=root.1 %}
+            {% with service=lcs_services|get_item:lcs_id %}
+                <details open>
+                    <summary>Lean Control Service: {{ lcs_id }}</summary>
+                    <ul>
+                        <li>
+                            {% include "services/_app_node.html" with app_id=app_id tree=service.apps %}
+                        </li>
+                    </ul>
+                </details>
+            {% endwith %}
         {% endwith %}
-        {% endfor %}
-    </ul>
-</details>
-{% endwith %}
-{% endfor %}
+    {% endfor %}
 
-<div style="margin-top: 2rem;">
-    {% if page_obj.has_previous %}
-    <a href="?page={{ page_obj.previous_page_number }}&search={{ search }}&mode={{ mode }}">Previous</a>
-    {% endif %}
+    <div style="margin-top: 2rem;">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&search={{ search }}&mode={{ mode }}">Previous</a>
+        {% endif %}
 
-    <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
 
-    {% if page_obj.has_next %}
-    <a href="?page={{ page_obj.next_page_number }}&search={{ search }}&mode={{ mode }}">Next</a>
-    {% endif %}
-</div>
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&search={{ search }}&mode={{ mode }}">Next</a>
+        {% endif %}
+    </div>
 {% else %}
-<p class="empty">No results found.</p>
+    <p class="empty">No results found.</p>
 {% endif %}
 
 </body>
