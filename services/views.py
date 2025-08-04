@@ -83,20 +83,21 @@ def fetch_records(mode):
 
 
 def build_service_app_tree(df, search_term=None):
-    if search_term:
-        search_term = search_term.lower()
-        df = df[df.apply(lambda row: search_term in str(row.values).lower(), axis=1)]
-
-    services = {}
-    roots = []
-
-    # Build a global map of all app metadata
+    # STEP 1: build full app metadata before filtering
     app_meta = (
         df[["app_id", "app_name", "application_type", "application_tier", "architecture_type"]]
         .drop_duplicates("app_id")
         .set_index("app_id")
         .to_dict("index")
     )
+
+    # STEP 2: apply search filter for actual tree structure
+    if search_term:
+        search_term = search_term.lower()
+        df = df[df.apply(lambda row: search_term in str(row.values).lower(), axis=1)]
+
+    services = {}
+    roots = []
 
     for lcs_id, service_df in df.groupby("lean_control_service_id"):
         apps = defaultdict(lambda: {
@@ -113,26 +114,25 @@ def build_service_app_tree(df, search_term=None):
             app_id = row["app_id"]
             parent_id = row["parent_app_id"]
 
-            # Populate app info
+            # Add app metadata
             app = apps[app_id]
             app.update(app_meta.get(app_id, {}))
             app["instances"].append(row.to_dict())
             app["parent"] = parent_id
 
-            # Ensure parent exists in map with metadata
+            # Add parent metadata if known
             if parent_id:
                 parent_app = apps[parent_id]
                 parent_app.update(app_meta.get(parent_id, {}))
                 parent_app["children"].append(app_id)
 
         services[lcs_id] = {"apps": dict(apps)}
-
-        # Find top-level apps for this service
         root_apps = [aid for aid, a in apps.items() if not a["parent"]]
         for app_id in root_apps:
             roots.append((lcs_id, app_id))
 
     return {"services": services, "roots": roots}
+
 
 
 
