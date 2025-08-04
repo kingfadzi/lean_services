@@ -1,7 +1,15 @@
 import re
-from shared.base_logger import BaseLogger
+import logging
 
-logger = BaseLogger.get_logger("GitCoordExtractor")
+# Setup standard logger
+logger = logging.getLogger("GitCoordExtractor")
+logger.setLevel(logging.INFO)
+
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("[%(asctime)s] %(levelname)s in %(name)s: %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 # Patterns with optional `.git` and optional trailing slash
 PATTERNS = [
