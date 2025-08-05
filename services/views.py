@@ -83,7 +83,7 @@ def fetch_records(mode):
 
 
 def build_service_app_tree(df, search_term=None):
-    # STEP 1: build full app metadata before filtering
+    # STEP 1: build full app metadata for all apps
     app_meta = (
         df[["app_id", "app_name", "application_type", "application_tier", "architecture_type"]]
         .drop_duplicates("app_id")
@@ -91,10 +91,22 @@ def build_service_app_tree(df, search_term=None):
         .to_dict("index")
     )
 
-    # STEP 2: apply search filter for actual tree structure
+    # STEP 2: apply filter AFTER building relationships
     if search_term:
         search_term = search_term.lower()
-        df = df[df.apply(lambda row: search_term in str(row.values).lower(), axis=1)]
+
+        # Find all matching app_ids from rows
+        matching_app_ids = set(
+            df[df.apply(lambda row: search_term in str(row.values).lower(), axis=1)]["app_id"]
+        )
+
+        # Also keep their parent_app_ids
+        matching_parent_ids = set(
+            df[df["app_id"].isin(matching_app_ids)]["parent_app_id"].dropna()
+        )
+
+        # Now only keep rows where either the app or its parent matched
+        df = df[df["app_id"].isin(matching_app_ids.union(matching_parent_ids))]
 
     services = {}
     roots = []
@@ -114,13 +126,13 @@ def build_service_app_tree(df, search_term=None):
             app_id = row["app_id"]
             parent_id = row["parent_app_id"]
 
-            # Add app metadata
+            # Populate app metadata
             app = apps[app_id]
             app.update(app_meta.get(app_id, {}))
             app["instances"].append(row.to_dict())
             app["parent"] = parent_id
 
-            # Add parent metadata if known
+            # Ensure parent metadata is added
             if parent_id:
                 parent_app = apps[parent_id]
                 parent_app.update(app_meta.get(parent_id, {}))
@@ -132,8 +144,6 @@ def build_service_app_tree(df, search_term=None):
             roots.append((lcs_id, app_id))
 
     return {"services": services, "roots": roots}
-
-
 
 
 
