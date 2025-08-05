@@ -1,39 +1,44 @@
 {% load tree_extras %}
 {% with app=tree|get_item:app_id %}
-    <details open>
-        <summary>{{ app.app_name }} ({{ app_id }})</summary>
+    <details style="margin-left: 0.5rem;">
+        <summary style="font-weight: 500; font-size: 0.95rem;">
+            {{ app.app_name }} ({{ app_id }})
+        </summary>
 
-        <!-- Always show app metadata -->
-        <div class="instance-meta" style="margin-left: 1rem; margin-bottom: 0.5rem;">
+        <!-- Application Metadata -->
+        <div class="instance-meta" style="margin-left: 1rem; font-size: 0.85rem; margin-bottom: 0.5rem;">
             <strong>Application Details</strong><br>
             ▪ Application Type: {{ app.application_type }}<br>
             ▪ Application Tier: {{ app.application_tier }}<br>
             ▪ Architecture Type: {{ app.architecture_type }}
         </div>
 
-        <!-- Show instances if present -->
+        <!-- Application Instances Collapsible -->
         {% if app.instances %}
-            {% for instance in app.instances %}
-                <div class="instance">
-                    <strong>{{ instance.instance_name }}</strong>
-                    <div class="instance-meta">
-                        ▪ Environment: {{ instance.environment }}<br>
-                        ▪ Install Type: {{ instance.install_type }}<br>
-                        ▪ Service: {{ instance.service_name }}<br>
-                        ▪ Jira Backlog: {{ instance.jira_backlog_id }}<br>
-                        ▪ Application Type: {{ instance.application_type }}<br>
-                        ▪ Application Tier: {{ instance.application_tier }}<br>
-                        ▪ Architecture Type: {{ instance.architecture_type }}
+            <details style="margin-left: 1rem; font-size: 0.85rem; margin-bottom: 0.5rem;">
+                <summary style="font-weight: 500;">Application Instances</summary>
+                {% for instance in app.instances %}
+                    <div class="instance" style="margin-left: 1rem; margin-bottom: 0.5rem;">
+                        <strong>{{ instance.instance_name }}</strong>
+                        <div class="instance-meta">
+                            ▪ Environment: {{ instance.environment }}<br>
+                            ▪ Install Type: {{ instance.install_type }}<br>
+                            ▪ Service: {{ instance.service_name }}<br>
+                            ▪ Jira Backlog: {{ instance.jira_backlog_id }}<br>
+                            ▪ Application Type: {{ instance.application_type }}<br>
+                            ▪ Application Tier: {{ instance.application_tier }}<br>
+                            ▪ Architecture Type: {{ instance.architecture_type }}
+                        </div>
                     </div>
-                </div>
-            {% endfor %}
+                {% endfor %}
+            </details>
         {% endif %}
 
-        <!-- Recursive children -->
+        <!-- Child Applications -->
         {% if app.children %}
-            <ul>
+            <ul style="margin-left: 1rem;">
                 {% for child_id in app.children %}
-                    <li>
+                    <li style="font-size: 0.9rem;">
                         {% include "services/_app_node.html" with app_id=child_id tree=tree %}
                     </li>
                 {% endfor %}
@@ -41,4 +46,3 @@
         {% endif %}
     </details>
 {% endwith %}
-
