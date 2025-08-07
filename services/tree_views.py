@@ -87,14 +87,14 @@ def build_tree(df):
 
     nodes = {}
     parent_map = {}
-    children_map = defaultdict(set)  # Use set to avoid duplicates
+    children_map = defaultdict(set)  # Track child relationships
 
     for _, row in df.iterrows():
         app_id = row["app_correlation_id"]
         parent_id = row["parent_app_id"]
         parent_map[app_id] = parent_id
 
-        # Create node only once
+        # Only initialize app node once
         if app_id not in nodes:
             nodes[app_id] = {
                 "id": app_id,
@@ -107,24 +107,25 @@ def build_tree(df):
                 "service_name": row["service_name"],
                 "service_id": row["service_id"],
                 "children": [],
-                "instances": {},
+                "instances": {},  # Use dict for deduplication
             }
 
-        # Add instance if not already added
-        instance_id = row["instance_correlation_id"]
-        if instance_id and instance_id not in nodes[app_id]["instances"]:
-            nodes[app_id]["instances"][instance_id] = {
-                "id": instance_id,
+        # Add service instance (deduplicated by ID)
+        inst_id = row["instance_correlation_id"]
+        if inst_id and inst_id not in nodes[app_id]["instances"]:
+            nodes[app_id]["instances"][inst_id] = {
+                "id": inst_id,
                 "name": row["instance_name"],
                 "env": row["environment"],
                 "install_type": row["install_type"],
             }
 
-        # Track parent-child relationships
+        # Track parent-child relationship
         if parent_id and parent_id != app_id:
             children_map[parent_id].add(app_id)
 
-    # Link children to parents (avoid duplicates)
+    # Safely link children
+    seen_links = set()
     for parent_id, child_ids in children_map.items():
         if parent_id not in nodes:
             print(f"[DEBUG] Skipping unknown parent_id: {parent_id}")
@@ -133,14 +134,15 @@ def build_tree(df):
             if child_id not in nodes:
                 print(f"[DEBUG] Skipping unknown child_id: {child_id}")
                 continue
-            if nodes[child_id] not in nodes[parent_id]["children"]:
+            if child_id not in seen_links:
                 nodes[parent_id]["children"].append(nodes[child_id])
+                seen_links.add(child_id)
 
-    # Convert instance dicts to lists
+    # Convert instance dicts to list
     for node in nodes.values():
         node["instances"] = list(node["instances"].values())
 
-    # Identify root nodes
+    # Identify root apps
     all_app_ids = set(nodes.keys())
     root_ids = [
         app_id for app_id in all_app_ids
@@ -150,8 +152,6 @@ def build_tree(df):
     print(f"[DEBUG] Root App Count: {len(root_ids)}")
 
     return [nodes[root_id] for root_id in root_ids], nodes
-
-
 
 
 def application_tree_view(request):
