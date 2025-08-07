@@ -87,14 +87,14 @@ def build_tree(df):
 
     nodes = {}
     children_map = defaultdict(list)
-    parent_map = defaultdict(lambda: None)
+    parent_map = {}
 
-    # Build application nodes with metadata
     for _, row in df.iterrows():
         app_id = row["app_correlation_id"]
         parent_id = row["parent_app_id"]
         parent_map[app_id] = parent_id
 
+        # Initialize the node only once per app
         if app_id not in nodes:
             nodes[app_id] = {
                 "id": app_id,
@@ -110,17 +110,22 @@ def build_tree(df):
                 "instances": [],
             }
 
-        # Append service instance
-        instance = {
-            "id": row["instance_correlation_id"],
-            "name": row["instance_name"],
-            "env": row["environment"],
-            "install_type": row["install_type"]
-        }
-        if instance["id"]:  # Avoid empty instance rows
-            nodes[app_id]["instances"].append(instance)
+        # Append service instance only if not already added
+        instance_id = row["instance_correlation_id"]
+        if instance_id:
+            instance = {
+                "id": instance_id,
+                "name": row["instance_name"],
+                "env": row["environment"],
+                "install_type": row["install_type"]
+            }
 
-        # Track parent-child relationships
+            # Avoid duplicate instances by ID
+            existing_ids = {inst["id"] for inst in nodes[app_id]["instances"]}
+            if instance_id not in existing_ids:
+                nodes[app_id]["instances"].append(instance)
+
+        # Track child relationships
         if parent_id and parent_id != app_id:
             children_map[parent_id].append(app_id)
 
@@ -129,20 +134,21 @@ def build_tree(df):
         if parent_id not in nodes:
             print(f"[DEBUG] Skipping unknown parent_id: {parent_id}")
             continue
-        for child_id in child_ids:
+        for child_id in set(child_ids):  # de-dupe child IDs
             if child_id not in nodes:
                 print(f"[DEBUG] Skipping unknown child_id: {child_id}")
                 continue
-            nodes[parent_id]["children"].append(nodes[child_id])
+            if nodes[child_id] not in nodes[parent_id]["children"]:
+                nodes[parent_id]["children"].append(nodes[child_id])
 
-    # Identify root applications (apps with no known parent in data)
+    # Determine root apps
     all_app_ids = set(nodes.keys())
     root_ids = [
         app_id for app_id in all_app_ids
-        if parent_map[app_id] is None or parent_map[app_id] not in all_app_ids
+        if parent_map.get(app_id) is None or parent_map[app_id] not in all_app_ids
     ]
 
-    print(f"[DEBUG] Root Apps: {root_ids}")
+    print(f"[DEBUG] Root App Count: {len(root_ids)}")
 
     return [nodes[root_id] for root_id in root_ids], nodes
 
