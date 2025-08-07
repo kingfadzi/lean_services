@@ -12,36 +12,24 @@
         <li><strong>Business Service:</strong> {{ node.service_name|default:"—" }} ({{ node.service_id|default:"—" }})</li>
     </ul>
 
-    {% if node.repositories %}
-        {% with total_repos=0 %}
-            {% for tool, repos in node.repositories.items %}
-                {% if repos %}
-                    {% with total_repos=total_repos|add:repos|length %}
-                    {% endwith %}
-                {% endif %}
-            {% endfor %}
-        {% endwith %}
-
-        {% if total_repos > 0 %}
-            <details class="tree" style="font-size: 0.9em;">
-                <summary>Repositories ({{ total_repos }})</summary>
-                <div style="padding-left: 1.5rem;">
-                    {% for tool, repos in node.repositories.items %}
-                        {% if repos %}
-                            <details class="tree" style="margin-bottom: 0.5rem;">
-                                <summary><strong>Tool: {{ tool|title }}</strong></summary>
-                                <ul style="margin: 0.3rem 0; list-style-type: disc; padding-left: 1.5rem;">
-                                    {% for repo in repos %}
-                                        <li>{{ repo }}</li>
-                                    {% endfor %}
-                                </ul>
-                            </details>
-                        {% endif %}
-                    {% endfor %}
-                </div>
-            </details>
-        {% endif %}
+    {% if node.repo_count > 0 %}
+        <details class="tree" style="font-size: 0.9em;">
+            <summary>Repositories ({{ node.repo_count }})</summary>
+            <div style="padding-left: 1.5rem;">
+                {% for tool, repos in node.repo_pairs %}
+                    <details class="tree" style="margin-bottom: 0.5rem;">
+                        <summary><strong>Tool: {{ tool|title }}</strong></summary>
+                        <ul style="margin: 0.3rem 0; list-style-type: disc; padding-left: 1.5rem;">
+                            {% for repo in repos %}
+                                <li>{{ repo }}</li>
+                            {% endfor %}
+                        </ul>
+                    </details>
+                {% endfor %}
+            </div>
+        </details>
     {% endif %}
+
 
     {% if node.instances_grouped %}
         <details class="tree" style="font-size: 0.9em;">

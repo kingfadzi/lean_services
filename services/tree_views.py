@@ -86,7 +86,10 @@ def fetch_records(mode):
 
 
 def fetch_repositories(app_ids):
-    if not app_ids:
+    """Get repos grouped by tool for the given app IDs, safely."""
+    # Drop null/empty and cast to plain Python strings
+    clean_ids = [str(a) for a in app_ids if a not in (None, "", "None")]
+    if not clean_ids:
         return {}
 
     with connection.cursor() as cursor:
@@ -95,19 +98,20 @@ def fetch_repositories(app_ids):
                 cm1.identifier AS app_id,
                 cm2.tool_type,
                 cm2.identifier AS repo_name
-            FROM component_mapping cm1
-            JOIN component_mapping cm2
+            FROM public.component_mapping cm1
+            JOIN public.component_mapping cm2
               ON cm1.component_id = cm2.component_id
             WHERE cm1.mapping_type = 'it_business_application'
               AND cm2.mapping_type = 'version_control'
               AND cm1.identifier = ANY(%s)
         """
-        cursor.execute(query, [list(app_ids)])
+        cursor.execute(query, [clean_ids])
         rows = cursor.fetchall()
 
     repos_by_app = defaultdict(lambda: defaultdict(list))
     for app_id, tool_type, repo_name in rows:
-        repos_by_app[app_id][tool_type].append(repo_name)
+        if repo_name:  # ignore empty repo names
+            repos_by_app[app_id][tool_type].append(repo_name)
 
     return repos_by_app
 
@@ -116,8 +120,8 @@ def build_tree(df, search_term=None):
     df = df.copy()
 
     if search_term:
-        search_term = search_term.lower()
-        mask = df.apply(lambda row: search_term in str(row.values).lower(), axis=1)
+        s = search_term.lower()
+        mask = df.apply(lambda row: s in str(row.values).lower(), axis=1)
         matching_apps = set(df[mask]["app_correlation_id"])
         matching_parents = set(df[df["app_correlation_id"].isin(matching_apps)]["application_parent_correlation_id"])
         keep_apps = matching_apps.union(matching_parents)
@@ -145,6 +149,19 @@ def build_tree(df, search_term=None):
     for _, row in df.drop_duplicates("app_correlation_id").iterrows():
         app_id = row["app_correlation_id"]
         parent_id = row["application_parent_correlation_id"]
+
+        repo_groups = repos_by_app.get(app_id, {})
+        # ⚙️ normalize, drop empties, sort & dedupe just in case
+        repo_groups = {
+            str(tool): sorted({r for r in (repos or []) if r})
+            for tool, repos in repo_groups.items()
+            if repos
+        }
+        repo_count = sum(len(v) for v in repo_groups.values())
+
+        # ⚙️ create a stable list of (tool, repos) for the template to iterate
+        repo_pairs = sorted(repo_groups.items(), key=lambda t: t[0].lower())
+
         nodes[app_id] = {
             "id": app_id,
             "name": row["app_name"],
@@ -156,9 +173,12 @@ def build_tree(df, search_term=None):
             "service_name": row["service_name"],
             "service_id": row["service_id"],
             "instances_grouped": dict(instances_by_app.get(app_id, {})),
-            "repositories": repos_by_app.get(app_id, {}),
+            "repositories": repo_groups,   # keep dict if you need it elsewhere
+            "repo_pairs": repo_pairs,      # ⚙️ use this in template
+            "repo_count": repo_count,
             "children": [],
         }
+
         parent_map[app_id] = parent_id
         if parent_id and parent_id != app_id:
             children_map[parent_id].append(app_id)
