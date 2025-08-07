@@ -14,12 +14,12 @@ def fetch_records(mode):
                 bs.service_correlation_id,
                 bs.service,
                 child_app.correlation_id AS app_correlation_id,
-                child_app.business_application_name,
+                child_app.business_application_name AS app_name,
                 si.correlation_id AS instance_correlation_id,
-                si.it_service_instance,
+                si.it_service_instance AS instance_name,
                 si.environment,
                 si.install_type,
-                child_app.application_parent_correlation_id,
+                child_app.application_parent_correlation_id AS parent_app_id,
                 child_app.application_type,
                 child_app.application_tier,
                 child_app.architecture_type
@@ -42,12 +42,12 @@ def fetch_records(mode):
                 bs.service_correlation_id,
                 bs.service,
                 bac.correlation_id AS app_correlation_id,
-                bac.business_application_name,
+                bac.business_application_name AS app_name,
                 si.correlation_id AS instance_correlation_id,
-                si.it_service_instance,
+                si.it_service_instance AS instance_name,
                 si.environment,
                 si.install_type,
-                bac.application_parent_correlation_id,
+                bac.application_parent_correlation_id AS parent_app_id,
                 bac.application_type,
                 bac.application_tier,
                 bac.architecture_type
@@ -68,6 +68,7 @@ def fetch_records(mode):
             JOIN public.vwsfitbusinessservice AS bs
               ON si.it_business_service_sysid = bs.it_business_service_sysid
         """
+
     with connection.cursor() as cursor:
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -82,55 +83,69 @@ def fetch_records(mode):
 
 
 def build_tree(df):
+    from collections import defaultdict
+
     nodes = {}
     children_map = defaultdict(list)
-    parent_map = {}
+    parent_map = defaultdict(lambda: None)
 
+    # Build application nodes with metadata
     for _, row in df.iterrows():
         app_id = row["app_correlation_id"]
         parent_id = row["parent_app_id"]
-        name = row["app_name"]
+        parent_map[app_id] = parent_id
 
         if app_id not in nodes:
             nodes[app_id] = {
                 "id": app_id,
-                "name": name,
-                "type": row.get("application_type"),
-                "tier": row.get("application_tier"),
-                "architecture": row.get("architecture_type"),
-                "lean_control_id": row.get("lean_control_service_id"),
-                "jira_backlog_id": row.get("jira_backlog_id"),
-                "service_id": row.get("service_id"),
-                "service_name": row.get("service_name"),
+                "name": row["app_name"],
+                "type": row["application_type"],
+                "tier": row["application_tier"],
+                "architecture": row["architecture_type"],
+                "lean_control_id": row["lean_control_service_id"],
+                "jira_backlog_id": row["jira_backlog_id"],
+                "service_name": row["service_name"],
+                "service_id": row["service_id"],
                 "children": [],
-                "instances": []
+                "instances": [],
             }
 
+        # Append service instance
         instance = {
-            "id": row.get("instance_correlation_id"),
-            "name": row.get("instance_name"),
-            "env": row.get("environment"),
-            "install_type": row.get("install_type")
+            "id": row["instance_correlation_id"],
+            "name": row["instance_name"],
+            "env": row["environment"],
+            "install_type": row["install_type"]
         }
-        nodes[app_id]["instances"].append(instance)
+        if instance["id"]:  # Avoid empty instance rows
+            nodes[app_id]["instances"].append(instance)
 
-        parent_map[app_id] = parent_id
+        # Track parent-child relationships
         if parent_id and parent_id != app_id:
             children_map[parent_id].append(app_id)
 
+    # Link children to parents
     for parent_id, child_ids in children_map.items():
+        if parent_id not in nodes:
+            print(f"[DEBUG] Skipping unknown parent_id: {parent_id}")
+            continue
         for child_id in child_ids:
-            if child_id in nodes:
-                nodes[parent_id]["children"].append(nodes[child_id])
+            if child_id not in nodes:
+                print(f"[DEBUG] Skipping unknown child_id: {child_id}")
+                continue
+            nodes[parent_id]["children"].append(nodes[child_id])
 
+    # Identify root applications (apps with no known parent in data)
     all_app_ids = set(nodes.keys())
     root_ids = [
         app_id for app_id in all_app_ids
-        if parent_map.get(app_id) is None or parent_map[app_id] not in all_app_ids
+        if parent_map[app_id] is None or parent_map[app_id] not in all_app_ids
     ]
-    root_nodes = [nodes[root_id] for root_id in root_ids]
 
-    return root_nodes, nodes
+    print(f"[DEBUG] Root Apps: {root_ids}")
+
+    return [nodes[root_id] for root_id in root_ids], nodes
+
 
 
 def application_tree_view(request):
