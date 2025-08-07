@@ -18,17 +18,27 @@
         .pagination {
             margin-top: 2rem;
         }
+        form.inline-form {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
     </style>
 </head>
 <body>
 <h1>Application Tree View (mode: {{ mode }})</h1>
 
-<form method="get">
+<form method="get" class="inline-form">
     <label for="mode">Select Mode:</label>
     <select name="mode" id="mode" onchange="this.form.submit()">
         <option value="by_si" {% if mode == "by_si" %}selected{% endif %}>By Service Instance</option>
         <option value="by_ts" {% if mode == "by_ts" %}selected{% endif %}>By Technical Service</option>
     </select>
+
+    <label for="search">Search:</label>
+    <input type="text" name="search" id="search" value="{{ search }}" placeholder="Search apps...">
+    <button type="submit">Search</button>
 </form>
 
 <hr>
@@ -36,26 +46,30 @@
 {% for tree in trees %}
     {% include "application_tree/_tree_node.html" with node=tree %}
     {% empty %}
-    <p>No applications found.</p>
+    <p>No matching applications found.</p>
 {% endfor %}
 
 <div class="pagination">
     <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
     <div style="margin-top: 0.5rem;">
         {% if page_obj.has_previous %}
-            <a href="?mode={{ mode }}&page={{ page_obj.previous_page_number }}">Previous</a>
+            <a href="?mode={{ mode }}&search={{ search }}&page={{ page_obj.previous_page_number }}">Previous</a>
         {% endif %}
 
         {% for num in page_obj.paginator.page_range %}
-            {% if page_obj.number == num %}
-                <strong>{{ num }}</strong>
-            {% else %}
-                <a href="?mode={{ mode }}&page={{ num }}">{{ num }}</a>
+            {% if num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
+                {% if page_obj.number == num %}
+                    <strong>{{ num }}</strong>
+                {% else %}
+                    <a href="?mode={{ mode }}&search={{ search }}&page={{ num }}">{{ num }}</a>
+                {% endif %}
+            {% elif num == 1 or num == page_obj.paginator.num_pages %}
+                ...
             {% endif %}
         {% endfor %}
 
         {% if page_obj.has_next %}
-            <a href="?mode={{ mode }}&page={{ page_obj.next_page_number }}">Next</a>
+            <a href="?mode={{ mode }}&search={{ search }}&page={{ page_obj.next_page_number }}">Next</a>
         {% endif %}
     </div>
 </div>

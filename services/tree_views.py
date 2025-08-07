@@ -14,12 +14,12 @@ def fetch_records(mode):
                 bs.service_correlation_id,
                 bs.service,
                 child_app.correlation_id AS app_correlation_id,
-                child_app.business_application_name AS app_name,
+                child_app.business_application_name,
                 si.correlation_id AS instance_correlation_id,
-                si.it_service_instance AS instance_name,
+                si.it_service_instance,
                 si.environment,
                 si.install_type,
-                child_app.application_parent_correlation_id AS parent_app_id,
+                child_app.application_parent_correlation_id AS application_parent_correlation_id,
                 child_app.application_type,
                 child_app.application_tier,
                 child_app.architecture_type
@@ -42,12 +42,12 @@ def fetch_records(mode):
                 bs.service_correlation_id,
                 bs.service,
                 bac.correlation_id AS app_correlation_id,
-                bac.business_application_name AS app_name,
+                bac.business_application_name,
                 si.correlation_id AS instance_correlation_id,
-                si.it_service_instance AS instance_name,
+                si.it_service_instance,
                 si.environment,
                 si.install_type,
-                bac.application_parent_correlation_id AS parent_app_id,
+                bac.application_parent_correlation_id AS application_parent_correlation_id,
                 bac.application_type,
                 bac.application_tier,
                 bac.architecture_type
@@ -68,7 +68,6 @@ def fetch_records(mode):
             JOIN public.vwsfitbusinessservice AS bs
               ON si.it_business_service_sysid = bs.it_business_service_sysid
         """
-
     with connection.cursor() as cursor:
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -76,99 +75,98 @@ def fetch_records(mode):
     columns = [
         "lean_control_service_id", "jira_backlog_id", "service_id", "service_name",
         "app_correlation_id", "app_name", "instance_correlation_id", "instance_name",
-        "environment", "install_type", "parent_app_id",
+        "environment", "install_type", "application_parent_correlation_id",
         "application_type", "application_tier", "architecture_type"
     ]
-    return pd.DataFrame(rows, columns=columns)
+    df = pd.DataFrame(rows, columns=columns)
+
+    # Sort by app_name for consistent order
+    df.sort_values("app_name", inplace=True)
+
+    return df
 
 
-def build_tree(df):
-    from collections import defaultdict
+def build_tree(df, search_term=None):
+    df = df.copy()
+
+    if search_term:
+        search_term = search_term.lower()
+        mask = df.apply(lambda row: search_term in str(row.values).lower(), axis=1)
+        matching_apps = set(df[mask]["app_correlation_id"])
+        matching_parents = set(df[df["app_correlation_id"].isin(matching_apps)]["application_parent_correlation_id"])
+        keep_apps = matching_apps.union(matching_parents)
+        df = df[df["app_correlation_id"].isin(keep_apps)]
+
+    app_meta = (
+        df[["app_correlation_id", "app_name", "application_type", "application_tier", "architecture_type"]]
+        .drop_duplicates("app_correlation_id")
+        .set_index("app_correlation_id")
+        .to_dict("index")
+    )
+
+    instances_by_app = defaultdict(list)
+    for _, row in df.iterrows():
+        inst = {
+            "id": row["instance_correlation_id"],
+            "name": row["instance_name"],
+            "env": row["environment"],
+            "install_type": row["install_type"],
+        }
+        instances_by_app[row["app_correlation_id"]].append(inst)
 
     nodes = {}
     parent_map = {}
-    children_map = defaultdict(set)  # Track child relationships
+    children_map = defaultdict(list)
 
-    for _, row in df.iterrows():
+    for _, row in df.drop_duplicates("app_correlation_id").iterrows():
         app_id = row["app_correlation_id"]
-        parent_id = row["parent_app_id"]
+        parent_id = row["application_parent_correlation_id"]
+        nodes[app_id] = {
+            "id": app_id,
+            "name": row["app_name"],
+            "type": row["application_type"],
+            "tier": row["application_tier"],
+            "architecture": row["architecture_type"],
+            "lean_control_id": row["lean_control_service_id"],
+            "jira_backlog_id": row["jira_backlog_id"],
+            "service_name": row["service_name"],
+            "service_id": row["service_id"],
+            "instances": instances_by_app[app_id],
+            "children": [],
+        }
         parent_map[app_id] = parent_id
-
-        # Only initialize app node once
-        if app_id not in nodes:
-            nodes[app_id] = {
-                "id": app_id,
-                "name": row["app_name"],
-                "type": row["application_type"],
-                "tier": row["application_tier"],
-                "architecture": row["architecture_type"],
-                "lean_control_id": row["lean_control_service_id"],
-                "jira_backlog_id": row["jira_backlog_id"],
-                "service_name": row["service_name"],
-                "service_id": row["service_id"],
-                "children": [],
-                "instances": {},  # Use dict for deduplication
-            }
-
-        # Add service instance (deduplicated by ID)
-        inst_id = row["instance_correlation_id"]
-        if inst_id and inst_id not in nodes[app_id]["instances"]:
-            nodes[app_id]["instances"][inst_id] = {
-                "id": inst_id,
-                "name": row["instance_name"],
-                "env": row["environment"],
-                "install_type": row["install_type"],
-            }
-
-        # Track parent-child relationship
         if parent_id and parent_id != app_id:
-            children_map[parent_id].add(app_id)
+            children_map[parent_id].append(app_id)
 
-    # Safely link children
-    seen_links = set()
     for parent_id, child_ids in children_map.items():
-        if parent_id not in nodes:
-            print(f"[DEBUG] Skipping unknown parent_id: {parent_id}")
-            continue
-        for child_id in child_ids:
-            if child_id not in nodes:
-                print(f"[DEBUG] Skipping unknown child_id: {child_id}")
-                continue
-            if child_id not in seen_links:
-                nodes[parent_id]["children"].append(nodes[child_id])
-                seen_links.add(child_id)
+        if parent_id in nodes:
+            for child_id in child_ids:
+                if child_id in nodes:
+                    nodes[parent_id]["children"].append(nodes[child_id])
 
-    # Convert instance dicts to list
-    for node in nodes.values():
-        node["instances"] = list(node["instances"].values())
-
-    # Identify root apps
-    all_app_ids = set(nodes.keys())
     root_ids = [
-        app_id for app_id in all_app_ids
-        if parent_map.get(app_id) is None or parent_map[app_id] not in all_app_ids
+        app_id for app_id in nodes
+        if parent_map.get(app_id) is None or parent_map[app_id] not in nodes
     ]
 
-    print(f"[DEBUG] Root App Count: {len(root_ids)}")
-
-    return [nodes[root_id] for root_id in root_ids], nodes
+    root_nodes = [nodes[app_id] for app_id in sorted(root_ids, key=lambda aid: nodes[aid]["name"])]
+    return root_nodes
 
 
 def application_tree_view(request):
     mode = request.GET.get("mode", "by_si")
+    search_term = request.GET.get("search", "").strip()
     page_number = request.GET.get("page", 1)
 
     df = fetch_records(mode)
-    root_nodes, node_map = build_tree(df)
+    tree = build_tree(df, search_term)
 
-    paginator = Paginator([node["id"] for node in root_nodes], 10)
+    paginator = Paginator(tree, 25)
     page_obj = paginator.get_page(page_number)
-    page_roots = page_obj.object_list
-
-    paginated_trees = [node_map[root_id] for root_id in page_roots if root_id in node_map]
 
     return render(request, "application_tree/tree_view.html", {
-        "trees": paginated_trees,
+        "trees": page_obj.object_list,
         "mode": mode,
+        "search": search_term,
         "page_obj": page_obj,
     })
