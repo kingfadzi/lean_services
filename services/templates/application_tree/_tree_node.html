@@ -15,14 +15,22 @@
     {% if node.instances %}
         <details class="tree" style="font-size: 0.9em;">
             <summary>Service Instances ({{ node.instances|length }})</summary>
-            <ul style="margin: 0.3rem 0; list-style-type: disc; padding-left: 1.5rem;">
-                {% for inst in node.instances %}
-                    <li>
-                        <strong>{{ inst.name|default:"Unnamed Instance" }}</strong><br>
-                        <small>ID: {{ inst.id }} | Env: {{ inst.env|default:"—" }} | Type: {{ inst.install_type|default:"—" }}</small>
-                    </li>
+            <div style="padding-left: 1.5rem;">
+                {% regroup node.instances by env as env_groups %}
+                {% for group in env_groups %}
+                    <details class="tree" style="margin-bottom: 0.5rem;">
+                        <summary><strong>Environment: {{ group.grouper|default:"—" }}</strong></summary>
+                        <ul style="margin: 0.3rem 0; list-style-type: disc; padding-left: 1.5rem;">
+                            {% for inst in group.list %}
+                                <li>
+                                    <strong>{{ inst.name|default:"Unnamed Instance" }}</strong><br>
+                                    <small>ID: {{ inst.id }} | Type: {{ inst.install_type|default:"—" }}</small>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    </details>
                 {% endfor %}
-            </ul>
+            </div>
         </details>
     {% endif %}
 

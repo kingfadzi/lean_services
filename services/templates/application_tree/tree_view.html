@@ -7,22 +7,75 @@
             font-family: sans-serif;
             padding: 2rem;
         }
+
+        h1 {
+            margin-bottom: 1.5rem;
+        }
+
+        form.inline-form {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        form.inline-form label {
+            font-weight: 500;
+            margin-right: 0.25rem;
+        }
+
+        form.inline-form select,
+        form.inline-form input[type="text"] {
+            font-size: 1rem;
+            padding: 0.5rem;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            min-width: 200px;
+        }
+
+        form.inline-form button {
+            background-color: #2c7be5;
+            color: white;
+            font-size: 1rem;
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        form.inline-form button:hover {
+            background-color: #1a5fcc;
+        }
+
         summary {
             cursor: pointer;
             font-weight: bold;
         }
+
         .tree {
             margin-left: 1.5rem;
             margin-bottom: 1rem;
         }
+
         .pagination {
             margin-top: 2rem;
+            font-size: 0.95rem;
         }
-        form.inline-form {
-            display: flex;
-            gap: 1rem;
-            align-items: center;
-            margin-bottom: 1rem;
+
+        .pagination a {
+            margin: 0 0.3rem;
+            text-decoration: none;
+            color: #2c7be5;
+        }
+
+        .pagination a:hover {
+            text-decoration: underline;
+        }
+
+        .pagination strong {
+            margin: 0 0.3rem;
+            font-weight: bold;
         }
     </style>
 </head>
@@ -56,14 +109,21 @@
             <a href="?mode={{ mode }}&search={{ search }}&page={{ page_obj.previous_page_number }}">Previous</a>
         {% endif %}
 
+        {# Loop through all page numbers #}
         {% for num in page_obj.paginator.page_range %}
-            {% if num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
-                {% if page_obj.number == num %}
+            {% if num == 1 or num == page_obj.paginator.num_pages %}
+                {% if num == page_obj.number %}
                     <strong>{{ num }}</strong>
                 {% else %}
                     <a href="?mode={{ mode }}&search={{ search }}&page={{ num }}">{{ num }}</a>
                 {% endif %}
-            {% elif num == 1 or num == page_obj.paginator.num_pages %}
+            {% elif num >= page_obj.number|add:"-4" and num <= page_obj.number|add:"5" %}
+                {% if num == page_obj.number %}
+                    <strong>{{ num }}</strong>
+                {% else %}
+                    <a href="?mode={{ mode }}&search={{ search }}&page={{ num }}">{{ num }}</a>
+                {% endif %}
+            {% elif num == page_obj.number|add:"-5" or num == page_obj.number|add:"6" %}
                 ...
             {% endif %}
         {% endfor %}
@@ -73,5 +133,6 @@
         {% endif %}
     </div>
 </div>
+
 </body>
 </html>
