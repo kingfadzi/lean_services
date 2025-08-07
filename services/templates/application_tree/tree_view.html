@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Application Tree View</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 2rem;
+        }
+        summary {
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .tree {
+            margin-left: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .pagination {
+            margin-top: 2rem;
+        }
+    </style>
+</head>
+<body>
+<h1>Application Tree View (mode: {{ mode }})</h1>
+
+<form method="get">
+    <label for="mode">Select Mode:</label>
+    <select name="mode" id="mode" onchange="this.form.submit()">
+        <option value="by_si" {% if mode == "by_si" %}selected{% endif %}>By Service Instance</option>
+        <option value="by_ts" {% if mode == "by_ts" %}selected{% endif %}>By Technical Service</option>
+    </select>
+</form>
+
+<hr>
+
+{% for tree in trees %}
+    {% include "application_tree/_tree_node.html" with node=tree %}
+    {% empty %}
+    <p>No applications found.</p>
+{% endfor %}
+
+<div class="pagination">
+    <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+    <div style="margin-top: 0.5rem;">
+        {% if page_obj.has_previous %}
+            <a href="?mode={{ mode }}&page={{ page_obj.previous_page_number }}">Previous</a>
+        {% endif %}
+
+        {% for num in page_obj.paginator.page_range %}
+            {% if page_obj.number == num %}
+                <strong>{{ num }}</strong>
+            {% else %}
+                <a href="?mode={{ mode }}&page={{ num }}">{{ num }}</a>
+            {% endif %}
+        {% endfor %}
+
+        {% if page_obj.has_next %}
+            <a href="?mode={{ mode }}&page={{ page_obj.next_page_number }}">Next</a>
+        {% endif %}
+    </div>
+</div>
+</body>
+</html>

@@ -11,3 +11,4 @@ asyncpg
 PyYAML
 tenacity
 filelock
+psycopg2-binary

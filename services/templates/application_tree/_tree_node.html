@@ -1,0 +1,32 @@
+<details class="tree">
+    <summary>
+        <strong>{{ node.name }}</strong> ({{ node.id }})
+    </summary>
+
+    <ul style="margin: 0.3rem 0; list-style-type: disc; padding-left: 1.5rem; font-size: 0.9em;">
+        <li><strong>Type:</strong> {{ node.type|default:"—" }}</li>
+        <li><strong>Tier:</strong> {{ node.tier|default:"—" }}</li>
+        <li><strong>Architecture:</strong> {{ node.architecture|default:"—" }}</li>
+        <li><strong>Lean Control ID:</strong> {{ node.lean_control_id|default:"—" }}</li>
+        <li><strong>Jira Backlog ID:</strong> {{ node.jira_backlog_id|default:"—" }}</li>
+        <li><strong>Business Service:</strong> {{ node.service_name|default:"—" }} ({{ node.service_id|default:"—" }})</li>
+    </ul>
+
+    {% if node.instances %}
+        <details class="tree" style="font-size: 0.9em;">
+            <summary>Service Instances ({{ node.instances|length }})</summary>
+            <ul style="margin: 0.3rem 0; list-style-type: disc; padding-left: 1.5rem;">
+                {% for inst in node.instances %}
+                    <li>
+                        <strong>{{ inst.name|default:"Unnamed Instance" }}</strong><br>
+                        <small>ID: {{ inst.id }} | Env: {{ inst.env|default:"—" }} | Type: {{ inst.install_type|default:"—" }}</small>
+                    </li>
+                {% endfor %}
+            </ul>
+        </details>
+    {% endif %}
+
+    {% for child in node.children %}
+        {% include "application_tree/_tree_node.html" with node=child %}
+    {% endfor %}
+</details>
