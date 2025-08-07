@@ -12,16 +12,46 @@
         <li><strong>Business Service:</strong> {{ node.service_name|default:"—" }} ({{ node.service_id|default:"—" }})</li>
     </ul>
 
-    {% if node.instances %}
+    {% if node.repositories %}
+        {% with total_repos=0 %}
+            {% for tool, repos in node.repositories.items %}
+                {% if repos %}
+                    {% with total_repos=total_repos|add:repos|length %}
+                    {% endwith %}
+                {% endif %}
+            {% endfor %}
+        {% endwith %}
+
+        {% if total_repos > 0 %}
+            <details class="tree" style="font-size: 0.9em;">
+                <summary>Repositories ({{ total_repos }})</summary>
+                <div style="padding-left: 1.5rem;">
+                    {% for tool, repos in node.repositories.items %}
+                        {% if repos %}
+                            <details class="tree" style="margin-bottom: 0.5rem;">
+                                <summary><strong>Tool: {{ tool|title }}</strong></summary>
+                                <ul style="margin: 0.3rem 0; list-style-type: disc; padding-left: 1.5rem;">
+                                    {% for repo in repos %}
+                                        <li>{{ repo }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </details>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </details>
+        {% endif %}
+    {% endif %}
+
+    {% if node.instances_grouped %}
         <details class="tree" style="font-size: 0.9em;">
-            <summary>Service Instances ({{ node.instances|length }})</summary>
+            <summary>Service Instances</summary>
             <div style="padding-left: 1.5rem;">
-                {% regroup node.instances by env as env_groups %}
-                {% for group in env_groups %}
+                {% for env, instances in node.instances_grouped.items %}
                     <details class="tree" style="margin-bottom: 0.5rem;">
-                        <summary><strong>Environment: {{ group.grouper|default:"—" }}</strong></summary>
+                        <summary><strong>Environment: {{ env|default:"—" }}</strong></summary>
                         <ul style="margin: 0.3rem 0; list-style-type: disc; padding-left: 1.5rem;">
-                            {% for inst in group.list %}
+                            {% for inst in instances %}
                                 <li>
                                     <strong>{{ inst.name|default:"Unnamed Instance" }}</strong><br>
                                     <small>ID: {{ inst.id }} | Type: {{ inst.install_type|default:"—" }}</small>
