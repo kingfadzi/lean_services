@@ -22,9 +22,7 @@ def fetch_records(mode):
                 child_app.application_parent_correlation_id AS application_parent_correlation_id,
                 child_app.application_type,
                 child_app.application_tier,
-                child_app.architecture_type,
-                cm2.identifier AS repo_identifier,
-                cm2.tool_type AS repo_tool_type
+                child_app.architecture_type
             FROM public.vwsfitbusinessservice AS bs
             JOIN public.lean_control_application AS lca
               ON lca.servicenow_app_id = bs.service_correlation_id
@@ -35,12 +33,6 @@ def fetch_records(mode):
              AND lpbd.is_parent = TRUE
             JOIN public.vwsfbusinessapplication AS child_app
               ON si.business_application_sysid = child_app.business_application_sys_id
-            LEFT JOIN component_mapping cm1
-              ON cm1.mapping_type = 'it_business_application'
-             AND cm1.identifier = child_app.correlation_id
-            LEFT JOIN component_mapping cm2
-              ON cm2.mapping_type = 'version_control'
-             AND cm2.component_id = cm1.component_id
         """
     else:
         query = """
@@ -58,9 +50,7 @@ def fetch_records(mode):
                 bac.application_parent_correlation_id AS application_parent_correlation_id,
                 bac.application_type,
                 bac.application_tier,
-                bac.architecture_type,
-                cm2.identifier AS repo_identifier,
-                cm2.tool_type AS repo_tool_type
+                bac.architecture_type
             FROM public.vwsfitserviceinstance AS si
             JOIN public.lean_control_application AS fia
               ON fia.servicenow_app_id = si.correlation_id
@@ -77,12 +67,6 @@ def fetch_records(mode):
               ON si.business_application_sysid = bac.business_application_sys_id
             JOIN public.vwsfitbusinessservice AS bs
               ON si.it_business_service_sysid = bs.it_business_service_sysid
-            LEFT JOIN component_mapping cm1
-              ON cm1.mapping_type = 'it_business_application'
-             AND cm1.identifier = bac.correlation_id
-            LEFT JOIN component_mapping cm2
-              ON cm2.mapping_type = 'version_control'
-             AND cm2.component_id = cm1.component_id
         """
 
     with connection.cursor() as cursor:
@@ -93,13 +77,39 @@ def fetch_records(mode):
         "lean_control_service_id", "jira_backlog_id", "service_id", "service_name",
         "app_correlation_id", "app_name", "instance_correlation_id", "instance_name",
         "environment", "install_type", "application_parent_correlation_id",
-        "application_type", "application_tier", "architecture_type",
-        "repo_identifier", "repo_tool_type"
+        "application_type", "application_tier", "architecture_type"
     ]
 
     df = pd.DataFrame(rows, columns=columns)
     df.sort_values("app_name", inplace=True)
     return df
+
+
+def fetch_repositories(app_ids):
+    if not app_ids:
+        return {}
+
+    with connection.cursor() as cursor:
+        query = """
+            SELECT
+                cm1.identifier AS app_id,
+                cm2.tool_type,
+                cm2.identifier AS repo_name
+            FROM component_mapping cm1
+            JOIN component_mapping cm2
+              ON cm1.component_id = cm2.component_id
+            WHERE cm1.mapping_type = 'it_business_application'
+              AND cm2.mapping_type = 'version_control'
+              AND cm1.identifier = ANY(%s)
+        """
+        cursor.execute(query, [list(app_ids)])
+        rows = cursor.fetchall()
+
+    repos_by_app = defaultdict(lambda: defaultdict(list))
+    for app_id, tool_type, repo_name in rows:
+        repos_by_app[app_id][tool_type].append(repo_name)
+
+    return repos_by_app
 
 
 def build_tree(df, search_term=None):
@@ -113,6 +123,9 @@ def build_tree(df, search_term=None):
         keep_apps = matching_apps.union(matching_parents)
         df = df[df["app_correlation_id"].isin(keep_apps)]
 
+    app_ids = df["app_correlation_id"].unique().tolist()
+    repos_by_app = fetch_repositories(app_ids)
+
     # Group service instances by app and environment
     instances_by_app = defaultdict(lambda: defaultdict(list))
     for _, row in df.iterrows():
@@ -124,15 +137,6 @@ def build_tree(df, search_term=None):
             "install_type": row["install_type"],
         }
         instances_by_app[app_id][env].append(inst)
-
-    # Group repositories by app and tool type
-    repos_by_app = defaultdict(lambda: defaultdict(list))
-    for _, row in df.dropna(subset=["repo_identifier"]).iterrows():
-        app_id = row["app_correlation_id"]
-        tool = row["repo_tool_type"]
-        repo = row["repo_identifier"]
-        if repo not in repos_by_app[app_id][tool]:
-            repos_by_app[app_id][tool].append(repo)
 
     nodes = {}
     parent_map = {}
