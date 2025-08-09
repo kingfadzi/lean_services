@@ -6,28 +6,28 @@ databases:
     enabled: true
 
     tables:
-      # --- 1) Existing TABLE copy (unchanged behavior) ---
+      # 1) EXISTING TABLE → TABLE (unchanged behavior)
       - source: dbo.component_tool_mapping
         dest: public.component_mapping
-        sort_columns: [created_at, id]     # table path still uses OFFSET; both cols ok
+        sort_columns: [created_at, id]   # table path uses OFFSET
         where: "mapping_type IN ('it_business_application','version_control','work_management')"
         enabled: true
-        # Optional: run BEFORE recreate (new feature)
+        # NEW (optional): runs BEFORE recreate
         pre_ddl_file: "metadata/sql/pre_component_mapping.sql"
-        # Runs after recreate (same timing as before, BEFORE copying data)
+        # As before: executed AFTER recreate, BEFORE copy
         post_ddl_file: "metadata/sql/component_mapping_repo_id.sql"
         transforms:
           plugins:
             - "metadata.transformers.component_mapping_repo_id.extract_git_coordinates"
 
-      # --- 2) Arbitrary QUERY with KEYSET chunking (2 sort columns: sort + unique) ---
+      # 2) ARBITRARY QUERY (INLINE) with KEYSET chunking (2 sort columns)
       - source: |
           SELECT uuid, updated, name, amount
           FROM dbo.source_view
         dest: public.source_view_dump
-        sort_columns: [updated, uuid]      # keyset pagination (sort_field, unique_field)
-        order: desc                        # optional: asc (default) | desc
-        where: "amount IS NOT NULL"        # optional; applied to the wrapped subquery
+        sort_columns: [updated, uuid]    # keyset: (sort_field, unique_field)
+        order: desc                      # optional: asc (default) | desc
+        where: "amount IS NOT NULL"      # optional; applied to wrapped subquery
         enabled: true
         # Optional schema helpers for query targets:
         pre_ddl_file: "metadata/sql/custom_target_schema.sql"
@@ -36,16 +36,14 @@ databases:
           plugins:
             - "metadata.transformers.cleanup.normalize_keys"
 
-      # --- 3) Arbitrary QUERY with OFFSET chunking (1 sort column) ---
-      - source: |
-          SELECT id, created_at, status
-          FROM dbo.audit_log
+      # 3) ARBITRARY QUERY (FROM FILE) with OFFSET chunking (1 sort column)
+      - source_file: "metadata/sql/audit_log.sql"
         dest: public.audit_log_dump
-        sort_columns: [created_at]         # single column => OFFSET/FETCH
-        order: asc                         # optional
+        sort_columns: [created_at]       # one column => OFFSET/FETCH
+        order: asc                       # optional
         enabled: true
         pre_ddl_file: "metadata/sql/audit_log_target.sql"
-        # post_ddl_file optional
+        # post_ddl_file: "metadata/sql/audit_log_post.sql"
         transforms:
           plugins:
             - "metadata.transformers.audit.scrub_pii"

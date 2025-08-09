@@ -6,13 +6,13 @@ import re
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from filelock import FileLock
 import importlib
 
 CHUNK_SIZE = 500
-CONFIG_PATH = "table_mapping.yaml"
+CONFIG_PATH = "metadata/table_mapping.yaml"
 OFFSET_FILE = Path("migration_checkpoints.json")
 
 # === Logging ===
@@ -45,8 +45,8 @@ def write_checkpoint(table: str, offset: int):
         temp.write_text(json.dumps(data))
         temp.replace(OFFSET_FILE)
 
-# === Keyset Checkpoints (generic; per dest) ===
-def read_keyset_checkpoint(dest: str) -> Dict[str, Any] | None:
+# === Keyset Checkpoints (generic; keyed by dest) ===
+def read_keyset_checkpoint(dest: str) -> Optional[Dict[str, Any]]:
     try:
         with FileLock(str(OFFSET_FILE) + ".lock"):
             if not OFFSET_FILE.exists():
@@ -71,7 +71,7 @@ def normalize_col(name: str) -> str:
     name = re.sub(r'[^a-zA-Z0-9]+', '_', name.strip()).lower()
     return re.sub(r'_+', '_', name).strip('_')[:63]
 
-def sqlserver_to_postgres_type(sql_type: str, max_len: Union[int, None]) -> str:
+def sqlserver_to_postgres_type(sql_type: str, max_len: Optional[int]) -> str:
     t = sql_type.lower()
     if t in ("varchar", "nvarchar", "char", "nchar"):
         return f"varchar({max_len})" if max_len and max_len > 0 else "text"
@@ -124,15 +124,40 @@ async def recreate_pg_table(conn_str: str, ddl: str, target_table: str):
     finally:
         await conn.close()
 
-# === Helpers for query-vs-table and WHERE wrapping ===
+# === Table/Query helpers ===
 def _is_sql_query(source: str) -> bool:
+    if not source:
+        return False
     s = source.strip().lower()
     return s.startswith("select") or s.startswith("with")
 
-def _wrap_query_with_where(base_sql: str, where: str | None) -> str:
+def _wrap_query_with_where(base_sql: str, where: Optional[str]) -> str:
     if not where:
         return f"({base_sql}) AS q"
     return f"(SELECT * FROM ({base_sql}) AS q_base WHERE {where}) AS q"
+
+def load_query_sql_from_cfg(cfg: Dict[str, Any]) -> str:
+    """
+    Returns SQL text for query jobs.
+    If neither 'source_file' nor a SQL-looking 'source' is present, returns "".
+    """
+    has_inline = bool(cfg.get("source"))
+    has_file = bool(cfg.get("source_file"))
+
+    if has_inline and has_file:
+        raise ValueError("Provide only one of 'source' or 'source_file' for a query entry.")
+
+    if has_file:
+        path = Path(cfg["source_file"])
+        if not path.exists():
+            raise FileNotFoundError(f"source_file not found: {path}")
+        return path.read_text()
+
+    src = cfg.get("source", "")
+    if _is_sql_query(src):
+        return src
+
+    return ""  # not a query job
 
 # === Fetchers ===
 @retry(
@@ -140,7 +165,7 @@ def _wrap_query_with_where(base_sql: str, where: str | None) -> str:
     wait=wait_exponential(multiplier=15, min=15, max=120),
     retry=retry_if_exception_type(Exception)
 )
-async def fetch_chunk_sqlserver(conn_str: str, table: str, sort_columns: List[str], offset: int, limit: int, where: str = None) -> List[dict]:
+async def fetch_chunk_sqlserver(conn_str: str, table: str, sort_columns: List[str], offset: int, limit: int, where: Optional[str] = None) -> List[dict]:
     if not sort_columns:
         raise ValueError("Sort columns required")
     schema, name = table.split(".", 1)
@@ -179,12 +204,12 @@ async def _fetch_query_offset(conn_str: str, from_sql: str, order_by: str, offse
 
 async def fetch_keyset_chunk_generic(
         conn_str: str,
-        from_sql: str,             # "(<query>) AS q" OR table FQN used as subquery
+        from_sql: str,             # "(<query>) AS q"
         sort_field: str,
         unique_field: str,
         direction: str,            # "asc" | "desc"
-        last_sort_value,
-        last_unique_value,
+        last_sort_value: Any,
+        last_unique_value: Any,
         limit: int
 ) -> List[dict]:
     dir_lower = (direction or "asc").lower()
@@ -193,7 +218,7 @@ async def fetch_keyset_chunk_generic(
 
     order_clause = f"ORDER BY {sort_field} {dir_lower}, {unique_field} {dir_lower}"
 
-    # On first chunk (no cursor), omit WHERE and just order+fetch
+    # First chunk (no cursor) => no WHERE, just order+fetch
     if last_sort_value is None or last_unique_value is None:
         query = f"SELECT * FROM {from_sql} {order_clause} OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY"
         params = (limit,)
@@ -246,7 +271,7 @@ async def insert_chunk_pg(conn_str: str, table: str, rows: List[Dict[str, Any]])
         await conn.close()
 
 # === Transforms ===
-def apply_plugin_chain(rows: list[dict], plugin_paths: list[str]) -> list[dict]:
+def apply_plugin_chain(rows: List[dict], plugin_paths: List[str]) -> List[dict]:
     for plugin_path in plugin_paths:
         mod_name, func_name = plugin_path.rsplit(".", 1)
         mod = importlib.import_module(mod_name)
@@ -254,8 +279,8 @@ def apply_plugin_chain(rows: list[dict], plugin_paths: list[str]) -> list[dict]:
         rows = func(rows)
     return rows
 
-# === Table migration (preserved semantics) ===
-async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table: str, sort_columns: List[str], table_cfg: dict, where: str = None):
+# === Table migration (preserved semantics, + pre_ddl support) ===
+async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table: str, sort_columns: List[str], table_cfg: dict, where: Optional[str] = None):
     logger.info(f"Starting migration: {src_table} → {dst_table}")
     try:
         # Optional pre-DDL (new; runs BEFORE recreate)
@@ -309,27 +334,30 @@ async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table:
 async def migrate_entry(src_conn: str, dst_conn: str, cfg: dict):
     """
     Uses the SAME config item shape as tables[].
-    If cfg['source'] starts with SELECT/WITH => treat as query.
-    Else => treat as table (preserve existing behavior).
+    If cfg['source'] starts with SELECT/WITH or cfg['source_file'] is set => query.
+    Else => table (preserve existing behavior).
     """
-    source = cfg["source"]
     dest = cfg["dest"]
     where = cfg.get("where")
     sort_columns = cfg.get("sort_columns") or []
     order = cfg.get("order", "asc").lower()
     plugins = cfg.get("transforms", {}).get("plugins", [])
 
-    if not _is_sql_query(source):
-        # TABLE path: untouched semantics (plus optional pre_ddl_file support)
+    # Try to load as a query (file or inline). Empty string means it's a table job.
+    query_sql = load_query_sql_from_cfg(cfg)
+
+    if not query_sql:
+        # TABLE path (preserve current behavior)
+        source_table = cfg["source"]
         await migrate_table(
-            src_conn, dst_conn, source, dest, sort_columns, cfg, where=where
+            src_conn, dst_conn, source_table, dest, sort_columns, cfg, where=where
         )
         return
 
     # QUERY path
     logger.info(f"Starting query migration: source SQL → {dest}")
 
-    # Optional schema setup for queries:
+    # Optional schema setup for queries (pre/post DDL)
     pre_file = cfg.get("pre_ddl_file")
     if pre_file:
         conn = await asyncpg.connect(dst_conn)
@@ -338,7 +366,7 @@ async def migrate_entry(src_conn: str, dst_conn: str, cfg: dict):
         finally:
             await conn.close()
 
-    # Preserve post_ddl_file timing as "pre-load" (mirrors table behavior)
+    # As with tables: run post_ddl_file BEFORE data load (same semantics)
     post_file = cfg.get("post_ddl_file")
     if post_file:
         conn = await asyncpg.connect(dst_conn)
@@ -347,12 +375,12 @@ async def migrate_entry(src_conn: str, dst_conn: str, cfg: dict):
         finally:
             await conn.close()
 
-    # Build FROM clause with optional WHERE
-    from_sql = _wrap_query_with_where(source, where)
+    # Build FROM clause with optional WHERE by wrapping the query
+    from_sql = _wrap_query_with_where(query_sql, where)
 
     total = 0
-    # Keyset if at least 2 columns; else OFFSET if 1 column
     if len(sort_columns) >= 2:
+        # Keyset pagination: (sort_field, unique_field)
         sort_field, unique_field = sort_columns[0], sort_columns[1]
         cursor = read_keyset_checkpoint(dest)
         last_sort = cursor["sort"] if cursor else None
@@ -375,7 +403,7 @@ async def migrate_entry(src_conn: str, dst_conn: str, cfg: dict):
                 rows = apply_plugin_chain(rows, plugins)
             inserted = await insert_chunk_pg(dst_conn, dest, rows)
             total += inserted
-            # advance cursor
+            # advance cursor from LAST row we inserted
             last_row = rows[-1]
             last_sort = last_row[sort_field]
             last_unique = last_row[unique_field]
@@ -384,9 +412,11 @@ async def migrate_entry(src_conn: str, dst_conn: str, cfg: dict):
                         f"cursor=({sort_field}={last_sort}, {unique_field}={last_unique})")
 
     else:
+        # OFFSET/FETCH pagination for queries with a single sort column
         if not sort_columns:
             raise ValueError("For queries, provide sort_columns (1 for OFFSET, 2 for keyset).")
-        order_by = ", ".join(sort_columns) + (f" {order}" if order in ("asc", "desc") else "")
+        order_suffix = f" {order}" if order in ("asc", "desc") else ""
+        order_by = ", ".join(sort_columns) + order_suffix
         offset = 0
         while True:
             rows = await _fetch_query_offset(src_conn, from_sql, order_by, offset, CHUNK_SIZE)
