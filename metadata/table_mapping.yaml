@@ -9,6 +9,7 @@ databases:
       # 1) EXISTING TABLE → TABLE (unchanged behavior)
       - source: dbo.component_tool_mapping
         dest: public.component_mapping
+        columns: [ id, component_id, mapping_type, tool_type, identifier, name, web_url, created_at ]
         sort_columns: [created_at, id]   # table path uses OFFSET
         where: "mapping_type IN ('it_business_application','version_control','work_management')"
         enabled: true
