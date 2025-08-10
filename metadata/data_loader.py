@@ -6,7 +6,7 @@ import re
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Union, Optional
+from typing import List, Dict, Any, Union, Optional, Tuple
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from filelock import FileLock
 import importlib
@@ -73,47 +73,64 @@ def sqlserver_to_postgres_type(sql_type: str, max_len: Union[int, None]) -> str:
         "date": "date", "time": "time", "smalldatetime": "timestamptz"
     }.get(t, "text")
 
-def _escape_sql_id(identifier: str) -> str:
+def _esc(idn: str) -> str:
     # SQL Server identifier escaping: [name], escape ']' as ']]'
-    return f"[{identifier.replace(']', ']]')}]"
+    return f"[{idn.replace(']', ']]')}]"
 
-def _build_base_sql(table: str,
-                    sort_columns: List[str],
-                    where: Optional[str],
-                    selected_columns: Optional[List[str]],
-                    group_by: Optional[List[str]]) -> str:
-    """Build the base SELECT ... ORDER BY ... OFFSET ? FETCH ? SQL (no params bound)."""
-    if not sort_columns:
-        raise ValueError("sort_columns required for deterministic pagination (OFFSET/FETCH needs ORDER BY).")
-
+def _build_base_sql(
+        table: str,
+        sort_columns: Optional[List[str]],
+        where: Optional[str],
+        selected_columns: Optional[List[str]],
+        group_by: Optional[List[str]],
+) -> Tuple[str, bool]:
+    """
+    Return (sql, uses_paging). If sort_columns is None/empty, we log a warning and skip OFFSET/FETCH.
+    SELECT * is used ONLY when selected_columns is not provided.
+    """
     schema, name = table.split(".", 1)
-    esc_schema = _escape_sql_id(schema)
-    esc_table = _escape_sql_id(name)
-    esc_order = ", ".join([_escape_sql_id(c) for c in sort_columns])
+    esc_schema = _esc(schema)
+    esc_table  = _esc(name)
 
+    # SELECT list: explicit columns if provided, else *
     if selected_columns and len(selected_columns) > 0:
-        select_clause = ", ".join([_escape_sql_id(c) for c in selected_columns])
+        select_clause = ", ".join([_esc(c) for c in selected_columns])
     else:
         select_clause = "*"
 
+    # GROUP BY requires explicit select list in SQL Server
     group_clause = ""
     if group_by and len(group_by) > 0:
-        # WITH GROUP BY, SELECT * is invalid in SQL Server. Force explicit columns.
         if not selected_columns:
             raise ValueError("GROUP BY requires explicit 'columns' in config; SELECT * is invalid with GROUP BY.")
-        esc_group = ", ".join([_escape_sql_id(c) for c in group_by])
-        group_clause = f"\n        GROUP BY {esc_group}"
+        esc_group = ", ".join([_esc(c) for c in group_by])
+        group_clause = f" GROUP BY {esc_group}"
+
+    # ORDER BY + paging (optional)
+    uses_paging = bool(sort_columns and len(sort_columns) > 0)
+    order_clause = ""
+    paging_clause = ""
+    if uses_paging:
+        esc_order = ", ".join([_esc(c) for c in sort_columns])  # ORDER BY original column names
+        order_clause = f" ORDER BY {esc_order}"
+        paging_clause = " OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
+    else:
+        logger.warning(
+            "No sort_columns defined for %s — running without ORDER BY and without paging. "
+            "Result set order is non-deterministic; checkpoints will be ignored for resumption.",
+            table,
+        )
 
     sql = f"""
         SELECT {select_clause}
         FROM {esc_schema}.{esc_table}
-        {f"WHERE {where}" if where else ""}
+        {f'WHERE {where}' if where else ''}
         {group_clause}
-        ORDER BY {esc_order}
-        OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+        {order_clause}
+        {paging_clause}
     """
-    # compact for logging
-    return re.sub(r"\s+", " ", sql).strip()
+    sql = re.sub(r"\s+", " ", sql).strip()
+    return sql, uses_paging
 
 # === Schema Handling ===
 async def extract_sqlserver_schema(conn_str: str, table: str, selected_columns: Optional[List[str]] = None) -> str:
@@ -178,16 +195,14 @@ async def recreate_pg_table(conn_str: str, ddl: str, target_table: str):
     wait=wait_exponential(multiplier=15, min=15, max=120),
     retry=retry_if_exception_type(Exception)
 )
-async def fetch_chunk_sqlserver(conn_str: str,
-                                sql_base: str,
-                                offset: int,
-                                limit: int) -> List[dict]:
-    """
-    Execute the pre-built SQL with OFFSET/FETCH parameters.
-    """
+async def fetch_chunk_sqlserver(conn_str: str, sql_base: str, params: Optional[tuple]) -> List[dict]:
+    """Execute the SQL with optional params (None when not paging)."""
     async with aioodbc.connect(dsn=conn_str, autocommit=True) as conn:
         async with conn.cursor() as cur:
-            await cur.execute(sql_base, (offset, limit))
+            if params:
+                await cur.execute(sql_base, params)
+            else:
+                await cur.execute(sql_base)
             if not cur.description:
                 return []
             cols = [col[0] for col in cur.description]
@@ -226,27 +241,30 @@ def apply_plugin_chain(rows: List[dict], plugin_paths: List[str]) -> List[dict]:
 
 # === Orchestration ===
 async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table: str,
-                        sort_columns: List[str], table_cfg: dict, where: str = None):
+                        sort_columns: Optional[List[str]], table_cfg: dict, where: str = None):
     logger.info(f"Starting migration: {src_table} → {dst_table}")
 
-    selected_cols = table_cfg.get("columns")  # optional explicit select
-    group_by = table_cfg.get("group_by")      # optional group by
+    selected_cols = table_cfg.get("columns")   # explicit select (optional)
+    group_by      = table_cfg.get("group_by")  # optional
 
-    # Build and log the base SQL ONCE (no params inlined; same SQL used for every chunk)
-    sql_base = _build_base_sql(
+    # Build & log base SQL once
+    sql_base, uses_paging = _build_base_sql(
         table=src_table,
         sort_columns=sort_columns,
         where=where,
         selected_columns=selected_cols,
-        group_by=group_by
+        group_by=group_by,
     )
     logger.info("SQL Server base query for %s:\n%s", src_table, sql_base)
 
-    # Read keyed checkpoint
+    # Read keyed checkpoint (only meaningful when paging)
     offset = read_checkpoint_keyed(src_conn, dst_conn, src_table, dst_table)
     recreate = table_cfg.get("recreate", True)
 
-    # Only (re)create the target table if starting fresh OR explicitly requested
+    if not uses_paging and offset > 0:
+        logger.warning("Checkpoint offset %s for %s will be ignored because paging is disabled.", offset, src_table)
+
+    # Only (re)create target if starting fresh OR explicitly requested
     if offset == 0 and recreate:
         try:
             ddl = await extract_sqlserver_schema(src_conn, src_table, selected_columns=selected_cols)
@@ -266,36 +284,46 @@ async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table:
         logger.info(f"Resuming {src_table} at offset {offset} without dropping {dst_table}")
 
     total = 0
-    while True:
+
+    if not uses_paging:
+        # Single-shot fetch (no ORDER BY / no OFFSET-FETCH)
         try:
-            rows = await fetch_chunk_sqlserver(
-                conn_str=src_conn,
-                sql_base=sql_base,
-                offset=offset,
-                limit=CHUNK_SIZE
-            )
-            if not rows:
-                break
-
-            plugins = table_cfg.get("transforms", {}).get("plugins", [])
-            if plugins:
-                rows = apply_plugin_chain(rows, plugins)
-
-            inserted = await insert_chunk_pg(dst_conn, dst_table, rows)
-            total += inserted
-
-            # Advance offset/checkpoint only after successful insert
-            offset += inserted
-            write_checkpoint_keyed(src_conn, dst_conn, src_table, dst_table, offset)
-
-            logger.info(f"Copied {inserted} rows (offset now {offset}, total {total})")
-
+            rows = await fetch_chunk_sqlserver(src_conn, sql_base, params=None)
+            if rows:
+                plugins = table_cfg.get("transforms", {}).get("plugins", [])
+                if plugins:
+                    rows = apply_plugin_chain(rows, plugins)
+                inserted = await insert_chunk_pg(dst_conn, dst_table, rows)
+                total += inserted
+                logger.info("Copied %s rows (no paging).", inserted)
         except Exception as e:
-            # No rewind: checkpoint already reflects last successful insert
-            logger.error(f"Error at offset {offset}: {e}")
+            logger.error("Error in non-paged fetch for %s: %s", src_table, e)
             raise
+    else:
+        # Paged loop
+        while True:
+            try:
+                rows = await fetch_chunk_sqlserver(src_conn, sql_base, params=(offset, CHUNK_SIZE))
+                if not rows:
+                    break
 
-    # Completed this table successfully; clear checkpoint
+                plugins = table_cfg.get("transforms", {}).get("plugins", [])
+                if plugins:
+                    rows = apply_plugin_chain(rows, plugins)
+
+                inserted = await insert_chunk_pg(dst_conn, dst_table, rows)
+                total += inserted
+
+                offset += inserted
+                write_checkpoint_keyed(src_conn, dst_conn, src_table, dst_table, offset)
+
+                logger.info("Copied %s rows (offset now %s, total %s)", inserted, offset, total)
+
+            except Exception as e:
+                logger.error("Error at offset %s for %s: %s", offset, src_table, e)
+                raise
+
+    # Completed
     write_checkpoint_keyed(src_conn, dst_conn, src_table, dst_table, 0)
     logger.info(f"Finished migration: {total} rows")
 
@@ -312,9 +340,7 @@ async def main_migration():
                 migrate_table(
                     db_group["source_db"],
                     db_group["target_db"],
-                    table_cfg["source"],
-                    table_cfg["dest"],
-                    table_cfg["sort_columns"],
+                    table_cfg.get("sort_columns"),  # may be None -> no paging
                     table_cfg,
                     where=table_cfg.get("where")
                 )
