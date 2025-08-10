@@ -25,6 +25,13 @@ def load_config(path: str = CONFIG_PATH) -> Dict[str, Any]:
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
+def build_sqlserver_conn_str(dsn_or_conn: str, extra: Optional[str]) -> str:
+    """Append extra ODBC options safely to a DSN or full conn string."""
+    if not extra:
+        return dsn_or_conn
+    sep = "" if dsn_or_conn.endswith(";") else ";"
+    return f"{dsn_or_conn}{sep}{extra}"
+
 # === Checkpoint Management (KEYED) ===
 def _ckpt_key(src_conn: str, dst_conn: str, src_table: str, dst_table: str) -> str:
     h = hashlib.sha1((src_conn + "→" + dst_conn).encode()).hexdigest()[:8]
@@ -85,20 +92,22 @@ def _build_base_sql(
         group_by: Optional[List[str]],
 ) -> Tuple[str, bool]:
     """
-    Return (sql, uses_paging). If sort_columns is None/empty, we log a warning and skip OFFSET/FETCH.
-    SELECT * is used ONLY when selected_columns is not provided.
+    Return (sql, uses_paging).
+    - If sort_columns is None/empty, skip ORDER BY/OFFSET-FETCH (warn once).
+    - SELECT * is used ONLY when selected_columns is not provided.
+    - GROUP BY requires explicit selected columns.
     """
     schema, name = table.split(".", 1)
     esc_schema = _esc(schema)
     esc_table  = _esc(name)
 
-    # SELECT list: explicit columns if provided, else *
+    # SELECT list
     if selected_columns and len(selected_columns) > 0:
         select_clause = ", ".join([_esc(c) for c in selected_columns])
     else:
         select_clause = "*"
 
-    # GROUP BY requires explicit select list in SQL Server
+    # GROUP BY
     group_clause = ""
     if group_by and len(group_by) > 0:
         if not selected_columns:
@@ -111,7 +120,7 @@ def _build_base_sql(
     order_clause = ""
     paging_clause = ""
     if uses_paging:
-        esc_order = ", ".join([_esc(c) for c in sort_columns])  # ORDER BY the provided column names
+        esc_order = ", ".join([_esc(c) for c in sort_columns])
         order_clause = f" ORDER BY {esc_order}"
         paging_clause = " OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
     else:
@@ -195,17 +204,40 @@ async def recreate_pg_table(conn_str: str, ddl: str, target_table: str):
     wait=wait_exponential(multiplier=15, min=15, max=120),
     retry=retry_if_exception_type(Exception)
 )
-async def fetch_chunk_sqlserver(conn_str: str, sql_base: str, params: Optional[tuple]) -> List[dict]:
-    """Execute the SQL with optional params (None when not paging)."""
-    async with aioodbc.connect(dsn=conn_str, autocommit=True) as conn:
+async def fetch_chunk_sqlserver(conn_str: str,
+                                sql_base: str,
+                                params: Optional[tuple],
+                                dsn_extra: Optional[str] = None,
+                                inline_paging: bool = False,
+                                offset: Optional[int] = None,
+                                limit: Optional[int] = None) -> List[dict]:
+    """
+    Execute the SQL. If inline_paging is True, replace 'OFFSET ? ROWS FETCH NEXT ? ROWS ONLY'
+    with literal integers (avoids some ODBC quirks). When inlined, params must be None.
+    """
+    sql_to_run = sql_base
+    exec_params = params
+
+    if inline_paging:
+        if offset is None or limit is None:
+            raise ValueError("inline_paging=True requires offset and limit")
+        sql_to_run = sql_base.replace(
+            "OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
+            f"OFFSET {int(offset)} ROWS FETCH NEXT {int(limit)} ROWS ONLY"
+        )
+        exec_params = None
+
+    full_conn = build_sqlserver_conn_str(conn_str, dsn_extra)
+
+    async with aioodbc.connect(dsn=full_conn, autocommit=True) as conn:
         async with conn.cursor() as cur:
-            if params:
-                await cur.execute(sql_base, params)
+            if exec_params:
+                await cur.execute(sql_to_run, exec_params)
             else:
-                await cur.execute(sql_base)
+                await cur.execute(sql_to_run)
             if not cur.description:
                 return []
-            cols = [col[0] for col in cur.description]
+            cols = [c[0] for c in cur.description]
             return [dict(zip(cols, row)) async for row in cur]
 
 @retry(
@@ -241,11 +273,14 @@ def apply_plugin_chain(rows: List[dict], plugin_paths: List[str]) -> List[dict]:
 
 # === Orchestration ===
 async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table: str,
-                        sort_columns: Optional[List[str]], table_cfg: dict, where: str = None):
+                        table_cfg: dict, where: str = None):
     logger.info(f"Starting migration: {src_table} → {dst_table}")
 
-    selected_cols = table_cfg.get("columns")   # explicit select (optional)
-    group_by      = table_cfg.get("group_by")  # optional
+    selected_cols = table_cfg.get("columns")           # optional explicit select
+    group_by      = table_cfg.get("group_by")          # optional
+    sort_columns  = table_cfg.get("sort_columns")      # optional; controls paging
+    odbc_extra    = table_cfg.get("odbc_extra")        # optional; extra ODBC 17 options
+    inline_paging = bool(table_cfg.get("inline_paging", False))
 
     # Build & log base SQL once
     sql_base, uses_paging = _build_base_sql(
@@ -257,7 +292,7 @@ async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table:
     )
     logger.info("SQL Server base query for %s:\n%s", src_table, sql_base)
 
-    # Read keyed checkpoint (only meaningful when paging)
+    # Read keyed checkpoint (only meaningful if paging)
     offset = read_checkpoint_keyed(src_conn, dst_conn, src_table, dst_table)
     recreate = table_cfg.get("recreate", True)
 
@@ -288,7 +323,9 @@ async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table:
     if not uses_paging:
         # Single-shot fetch (no ORDER BY / no OFFSET-FETCH)
         try:
-            rows = await fetch_chunk_sqlserver(src_conn, sql_base, params=None)
+            rows = await fetch_chunk_sqlserver(
+                src_conn, sql_base, params=None, dsn_extra=odbc_extra
+            )
             if rows:
                 plugins = table_cfg.get("transforms", {}).get("plugins", [])
                 if plugins:
@@ -303,7 +340,15 @@ async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table:
         # Paged loop
         while True:
             try:
-                rows = await fetch_chunk_sqlserver(src_conn, sql_base, params=(offset, CHUNK_SIZE))
+                rows = await fetch_chunk_sqlserver(
+                    src_conn,
+                    sql_base,
+                    params=(offset, CHUNK_SIZE) if not inline_paging else None,
+                    dsn_extra=odbc_extra,
+                    inline_paging=inline_paging,
+                    offset=offset,
+                    limit=CHUNK_SIZE,
+                )
                 if not rows:
                     break
 
@@ -340,10 +385,9 @@ async def main_migration():
                 migrate_table(
                     db_group["source_db"],
                     db_group["target_db"],
-                    table_cfg["source"],                 # <-- FIXED: pass src table
-                    table_cfg["dest"],                   # <-- FIXED: pass dest table
-                    table_cfg.get("sort_columns"),       # optional
-                    table_cfg,                           # whole table config
+                    table_cfg["source"],
+                    table_cfg["dest"],
+                    table_cfg,
                     where=table_cfg.get("where")
                 )
             )

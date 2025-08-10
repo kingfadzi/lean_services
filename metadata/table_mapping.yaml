@@ -14,6 +14,7 @@ databases:
         group_by: ["Component Id", "Mapping Type"]
         where: "mapping_type IN ('it_business_application','version_control','work_management')"
         enabled: true
+        odbc_extra: "Encrypt=no;TrustServerCertificate=yes;MARS_Connection=Yes;Connection Timeout=60;Login Timeout=30;Packet Size=32767"
         # NEW (optional): runs BEFORE recreate
         pre_ddl_file: "metadata/sql/pre_component_mapping.sql"
         # As before: executed AFTER recreate, BEFORE copy
