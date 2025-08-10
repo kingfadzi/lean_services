@@ -111,7 +111,7 @@ def _build_base_sql(
     order_clause = ""
     paging_clause = ""
     if uses_paging:
-        esc_order = ", ".join([_esc(c) for c in sort_columns])  # ORDER BY original column names
+        esc_order = ", ".join([_esc(c) for c in sort_columns])  # ORDER BY the provided column names
         order_clause = f" ORDER BY {esc_order}"
         paging_clause = " OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
     else:
@@ -340,8 +340,10 @@ async def main_migration():
                 migrate_table(
                     db_group["source_db"],
                     db_group["target_db"],
-                    table_cfg.get("sort_columns"),  # may be None -> no paging
-                    table_cfg,
+                    table_cfg["source"],                 # <-- FIXED: pass src table
+                    table_cfg["dest"],                   # <-- FIXED: pass dest table
+                    table_cfg.get("sort_columns"),       # optional
+                    table_cfg,                           # whole table config
                     where=table_cfg.get("where")
                 )
             )
