@@ -32,6 +32,15 @@ def build_sqlserver_conn_str(dsn_or_conn: str, extra: Optional[str]) -> str:
     sep = "" if dsn_or_conn.endswith(";") else ";"
     return f"{dsn_or_conn}{sep}{extra}"
 
+def redact_conn_str(conn: str) -> str:
+    """Redact secrets in a connection string for logging."""
+    s = conn
+    # redact common fields: Password, Pwd, UID/User ID, AccessToken
+    s = re.sub(r"(?i)(Password|Pwd)\s*=\s*[^;]*", r"\1=****", s)
+    s = re.sub(r"(?i)(UID|User\s*ID)\s*=\s*[^;]*", r"\1=****", s)
+    s = re.sub(r"(?i)(AccessToken)\s*=\s*[^;]*", r"\1=****", s)
+    return s
+
 # === Checkpoint Management (KEYED) ===
 def _ckpt_key(src_conn: str, dst_conn: str, src_table: str, dst_table: str) -> str:
     h = hashlib.sha1((src_conn + "→" + dst_conn).encode()).hexdigest()[:8]
@@ -290,7 +299,15 @@ async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table:
         selected_columns=selected_cols,
         group_by=group_by,
     )
+
+    # ---- NEW: Log effective connection and options ONCE per table ----
+    effective_conn = build_sqlserver_conn_str(src_conn, odbc_extra)
+    logger.info("ODBC extras for %s: %s", src_table, odbc_extra if odbc_extra else "<none>")
+    logger.info("inline_paging for %s: %s", src_table, inline_paging)
+    logger.info("Paging enabled for %s: %s (CHUNK_SIZE=%s)", src_table, uses_paging, CHUNK_SIZE if uses_paging else "n/a")
+    logger.info("Effective SQL Server DSN for %s: %s", src_table, redact_conn_str(effective_conn))
     logger.info("SQL Server base query for %s:\n%s", src_table, sql_base)
+    # ------------------------------------------------------------------
 
     # Read keyed checkpoint (only meaningful if paging)
     offset = read_checkpoint_keyed(src_conn, dst_conn, src_table, dst_table)
