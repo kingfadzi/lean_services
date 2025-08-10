@@ -95,12 +95,7 @@ async def extract_sqlserver_schema(conn_str: str, table: str, selected_columns: 
         if selected_columns and len(selected_columns) > 0:
             want = [c.strip() for c in selected_columns]
             want_lc_index = {c.lower(): i for i, c in enumerate(want)}
-            # Keep only wanted columns (case-insensitive match)
-            rows = [
-                r for r in rows
-                if r[0].lower() in want_lc_index
-            ]
-            # Order rows according to provided selected_columns
+            rows = [r for r in rows if r[0].lower() in want_lc_index]
             rows.sort(key=lambda r: want_lc_index[r[0].lower()])
 
         ddl_lines = []
@@ -143,10 +138,12 @@ async def recreate_pg_table(conn_str: str, ddl: str, target_table: str):
     retry=retry_if_exception_type(Exception)
 )
 async def fetch_chunk_sqlserver(conn_str: str, table: str, sort_columns: List[str], offset: int, limit: int,
-                                where: str = None, selected_columns: Optional[List[str]] = None) -> List[dict]:
+                                where: str = None, selected_columns: Optional[List[str]] = None,
+                                group_by: Optional[List[str]] = None) -> List[dict]:
     """
     Fetch a chunk from SQL Server with OFFSET/FETCH.
     If selected_columns is provided, only select those columns; otherwise SELECT *.
+    Optional group_by list adds a GROUP BY clause (identifiers only).
     sort_columns are required for deterministic pagination.
     """
     if not sort_columns:
@@ -162,16 +159,21 @@ async def fetch_chunk_sqlserver(conn_str: str, table: str, sort_columns: List[st
     esc_order = ", ".join([escape_sql_id(col) for col in sort_columns])
 
     if selected_columns and len(selected_columns) > 0:
-        # Build a SELECT list with escaped identifiers
         esc_select = ", ".join([escape_sql_id(c) for c in selected_columns])
         select_clause = esc_select
     else:
         select_clause = "*"
 
+    group_clause = ""
+    if group_by and len(group_by) > 0:
+        esc_group = ", ".join([escape_sql_id(c) for c in group_by])
+        group_clause = f"\n        GROUP BY {esc_group}"
+
     sql = f"""
         SELECT {select_clause}
         FROM {esc_schema}.{esc_table}
         {f"WHERE {where}" if where else ""}
+        {group_clause}
         ORDER BY {esc_order}
         OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
     """
@@ -222,6 +224,8 @@ async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table:
 
     # Columns to select (optional)
     selected_cols = table_cfg.get("columns")  # e.g., ["Id","Name","UpdatedAt"]
+    # Group by (optional)
+    group_by = table_cfg.get("group_by")
 
     # Read keyed checkpoint
     offset = read_checkpoint_keyed(src_conn, dst_conn, src_table, dst_table)
@@ -256,7 +260,8 @@ async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table:
                 offset=offset,
                 limit=CHUNK_SIZE,
                 where=where,
-                selected_columns=selected_cols
+                selected_columns=selected_cols,
+                group_by=group_by
             )
             if not rows:
                 break
