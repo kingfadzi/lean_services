@@ -56,7 +56,7 @@ def write_checkpoint_keyed(src_conn: str, dst_conn: str, src_table: str, dst_tab
     data[key] = int(offset)
     _write_ckpt_file(data)
 
-# === Schema Handling ===
+# === Helpers ===
 def normalize_col(name: str) -> str:
     name = re.sub(r'[^a-zA-Z0-9]+', '_', name.strip()).lower()
     return re.sub(r'_+', '_', name).strip('_')[:63]
@@ -73,6 +73,49 @@ def sqlserver_to_postgres_type(sql_type: str, max_len: Union[int, None]) -> str:
         "date": "date", "time": "time", "smalldatetime": "timestamptz"
     }.get(t, "text")
 
+def _escape_sql_id(identifier: str) -> str:
+    # SQL Server identifier escaping: [name], escape ']' as ']]'
+    return f"[{identifier.replace(']', ']]')}]"
+
+def _build_base_sql(table: str,
+                    sort_columns: List[str],
+                    where: Optional[str],
+                    selected_columns: Optional[List[str]],
+                    group_by: Optional[List[str]]) -> str:
+    """Build the base SELECT ... ORDER BY ... OFFSET ? FETCH ? SQL (no params bound)."""
+    if not sort_columns:
+        raise ValueError("sort_columns required for deterministic pagination (OFFSET/FETCH needs ORDER BY).")
+
+    schema, name = table.split(".", 1)
+    esc_schema = _escape_sql_id(schema)
+    esc_table = _escape_sql_id(name)
+    esc_order = ", ".join([_escape_sql_id(c) for c in sort_columns])
+
+    if selected_columns and len(selected_columns) > 0:
+        select_clause = ", ".join([_escape_sql_id(c) for c in selected_columns])
+    else:
+        select_clause = "*"
+
+    group_clause = ""
+    if group_by and len(group_by) > 0:
+        # WITH GROUP BY, SELECT * is invalid in SQL Server. Force explicit columns.
+        if not selected_columns:
+            raise ValueError("GROUP BY requires explicit 'columns' in config; SELECT * is invalid with GROUP BY.")
+        esc_group = ", ".join([_escape_sql_id(c) for c in group_by])
+        group_clause = f"\n        GROUP BY {esc_group}"
+
+    sql = f"""
+        SELECT {select_clause}
+        FROM {esc_schema}.{esc_table}
+        {f"WHERE {where}" if where else ""}
+        {group_clause}
+        ORDER BY {esc_order}
+        OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+    """
+    # compact for logging
+    return re.sub(r"\s+", " ", sql).strip()
+
+# === Schema Handling ===
 async def extract_sqlserver_schema(conn_str: str, table: str, selected_columns: Optional[List[str]] = None) -> str:
     """
     Build a CREATE TABLE DDL for Postgres based on SQL Server schema.
@@ -91,7 +134,6 @@ async def extract_sqlserver_schema(conn_str: str, table: str, selected_columns: 
         """, (schema, name))
         rows = await cursor.fetchall()
 
-        # Filter/Order columns if a subset is specified
         if selected_columns and len(selected_columns) > 0:
             want = [c.strip() for c in selected_columns]
             want_lc_index = {c.lower(): i for i, c in enumerate(want)}
@@ -117,12 +159,11 @@ async def recreate_pg_table(conn_str: str, ddl: str, target_table: str):
     norm_schema = normalize_col(target_schema)
     norm_name = normalize_col(target_name)
     fqn = f'"{norm_schema}"."{norm_name}"'
-    # ddl already contains column list; replace only the table FQN safely
     m = re.search(r"\(.*\)", ddl, flags=re.DOTALL)
     if not m:
         raise ValueError("Could not find column list in DDL:\n" + ddl[:200])
     fixed_ddl = f"CREATE TABLE {fqn} {m.group(0)}"
-    logger.info("Recreate DDL:\n" + repr(fixed_ddl))
+    logger.info("Recreate DDL:\n%s", fixed_ddl)
     conn = await asyncpg.connect(conn_str)
     try:
         async with conn.transaction():
@@ -137,50 +178,16 @@ async def recreate_pg_table(conn_str: str, ddl: str, target_table: str):
     wait=wait_exponential(multiplier=15, min=15, max=120),
     retry=retry_if_exception_type(Exception)
 )
-async def fetch_chunk_sqlserver(conn_str: str, table: str, sort_columns: List[str], offset: int, limit: int,
-                                where: str = None, selected_columns: Optional[List[str]] = None,
-                                group_by: Optional[List[str]] = None) -> List[dict]:
+async def fetch_chunk_sqlserver(conn_str: str,
+                                sql_base: str,
+                                offset: int,
+                                limit: int) -> List[dict]:
     """
-    Fetch a chunk from SQL Server with OFFSET/FETCH.
-    If selected_columns is provided, only select those columns; otherwise SELECT *.
-    Optional group_by list adds a GROUP BY clause (identifiers only).
-    sort_columns are required for deterministic pagination.
+    Execute the pre-built SQL with OFFSET/FETCH parameters.
     """
-    if not sort_columns:
-        raise ValueError("Sort columns required")
-
-    schema, name = table.split(".", 1)
-
-    def escape_sql_id(identifier: str) -> str:
-        return f"[{identifier.replace(']', ']]')}]"
-
-    esc_schema = escape_sql_id(schema)
-    esc_table = escape_sql_id(name)
-    esc_order = ", ".join([escape_sql_id(col) for col in sort_columns])
-
-    if selected_columns and len(selected_columns) > 0:
-        esc_select = ", ".join([escape_sql_id(c) for c in selected_columns])
-        select_clause = esc_select
-    else:
-        select_clause = "*"
-
-    group_clause = ""
-    if group_by and len(group_by) > 0:
-        esc_group = ", ".join([escape_sql_id(c) for c in group_by])
-        group_clause = f"\n        GROUP BY {esc_group}"
-
-    sql = f"""
-        SELECT {select_clause}
-        FROM {esc_schema}.{esc_table}
-        {f"WHERE {where}" if where else ""}
-        {group_clause}
-        ORDER BY {esc_order}
-        OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
-    """
-
     async with aioodbc.connect(dsn=conn_str, autocommit=True) as conn:
         async with conn.cursor() as cur:
-            await cur.execute(sql, (offset, limit))
+            await cur.execute(sql_base, (offset, limit))
             if not cur.description:
                 return []
             cols = [col[0] for col in cur.description]
@@ -222,10 +229,18 @@ async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table:
                         sort_columns: List[str], table_cfg: dict, where: str = None):
     logger.info(f"Starting migration: {src_table} → {dst_table}")
 
-    # Columns to select (optional)
-    selected_cols = table_cfg.get("columns")  # e.g., ["Id","Name","UpdatedAt"]
-    # Group by (optional)
-    group_by = table_cfg.get("group_by")
+    selected_cols = table_cfg.get("columns")  # optional explicit select
+    group_by = table_cfg.get("group_by")      # optional group by
+
+    # Build and log the base SQL ONCE (no params inlined; same SQL used for every chunk)
+    sql_base = _build_base_sql(
+        table=src_table,
+        sort_columns=sort_columns,
+        where=where,
+        selected_columns=selected_cols,
+        group_by=group_by
+    )
+    logger.info("SQL Server base query for %s:\n%s", src_table, sql_base)
 
     # Read keyed checkpoint
     offset = read_checkpoint_keyed(src_conn, dst_conn, src_table, dst_table)
@@ -255,13 +270,9 @@ async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table:
         try:
             rows = await fetch_chunk_sqlserver(
                 conn_str=src_conn,
-                table=src_table,
-                sort_columns=sort_columns,
+                sql_base=sql_base,
                 offset=offset,
-                limit=CHUNK_SIZE,
-                where=where,
-                selected_columns=selected_cols,
-                group_by=group_by
+                limit=CHUNK_SIZE
             )
             if not rows:
                 break
