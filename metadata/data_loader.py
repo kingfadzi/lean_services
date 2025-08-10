@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Union
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from filelock import FileLock
 import importlib
+import hashlib
 
 CHUNK_SIZE = 500
 CONFIG_PATH = "metadata/table_mapping.yaml"
@@ -24,26 +25,37 @@ def load_config(path: str = CONFIG_PATH) -> Dict[str, Any]:
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
-# === Checkpoint Management ===
-def read_checkpoint(table: str) -> int:
-    try:
-        with FileLock(str(OFFSET_FILE) + ".lock"):
-            if not OFFSET_FILE.exists():
-                return 0
-            data = json.loads(OFFSET_FILE.read_text())
-            return data.get(table, 0)
-    except (json.JSONDecodeError, FileNotFoundError):
-        return 0
+# === Checkpoint Management (KEYED) ===
+def _ckpt_key(src_conn: str, dst_conn: str, src_table: str, dst_table: str) -> str:
+    # Keep key short and unique to the (src_conn, dst_conn, src_table, dst_table)
+    h = hashlib.sha1((src_conn + "→" + dst_conn).encode()).hexdigest()[:8]
+    return f"{src_table}->{dst_table}#{h}"
 
-def write_checkpoint(table: str, offset: int):
+def _read_ckpt_file() -> Dict[str, Any]:
     with FileLock(str(OFFSET_FILE) + ".lock"):
-        data = {}
-        if OFFSET_FILE.exists():
-            data = json.loads(OFFSET_FILE.read_text())
-        data[table] = offset
+        if not OFFSET_FILE.exists():
+            return {}
+        try:
+            return json.loads(OFFSET_FILE.read_text())
+        except json.JSONDecodeError:
+            return {}
+
+def _write_ckpt_file(data: Dict[str, Any]) -> None:
+    with FileLock(str(OFFSET_FILE) + ".lock"):
         temp = OFFSET_FILE.with_suffix(".tmp")
         temp.write_text(json.dumps(data))
         temp.replace(OFFSET_FILE)
+
+def read_checkpoint_keyed(src_conn: str, dst_conn: str, src_table: str, dst_table: str) -> int:
+    key = _ckpt_key(src_conn, dst_conn, src_table, dst_table)
+    data = _read_ckpt_file()
+    return int(data.get(key, 0))
+
+def write_checkpoint_keyed(src_conn: str, dst_conn: str, src_table: str, dst_table: str, offset: int) -> None:
+    key = _ckpt_key(src_conn, dst_conn, src_table, dst_table)
+    data = _read_ckpt_file()
+    data[key] = int(offset)
+    _write_ckpt_file(data)
 
 # === Schema Handling ===
 def normalize_col(name: str) -> str:
@@ -165,40 +177,57 @@ def apply_plugin_chain(rows: list[dict], plugin_paths: list[str]) -> list[dict]:
 
 async def migrate_table(src_conn: str, dst_conn: str, src_table: str, dst_table: str, sort_columns: List[str], table_cfg: dict, where: str = None):
     logger.info(f"Starting migration: {src_table} → {dst_table}")
-    try:
-        ddl = await extract_sqlserver_schema(src_conn, src_table)
-        await recreate_pg_table(dst_conn, ddl, dst_table)
-        post_file = table_cfg.get("post_ddl_file")
-        if post_file:
-            post_sql = Path(post_file).read_text()
-            conn = await asyncpg.connect(dst_conn)
-            try:
-                await conn.execute(post_sql)
-            finally:
-                await conn.close()
-    except Exception as e:
-        logger.error(f"DDL error: {e}")
-        raise
-    offset = read_checkpoint(src_table)
+
+    # Read keyed checkpoint
+    offset = read_checkpoint_keyed(src_conn, dst_conn, src_table, dst_table)
+    recreate = table_cfg.get("recreate", True)
+
+    # Only (re)create the target table if starting fresh OR explicitly requested
+    if offset == 0 and recreate:
+        try:
+            ddl = await extract_sqlserver_schema(src_conn, src_table)
+            await recreate_pg_table(dst_conn, ddl, dst_table)
+            post_file = table_cfg.get("post_ddl_file")
+            if post_file:
+                post_sql = Path(post_file).read_text()
+                conn = await asyncpg.connect(dst_conn)
+                try:
+                    await conn.execute(post_sql)
+                finally:
+                    await conn.close()
+        except Exception as e:
+            logger.error(f"DDL error: {e}")
+            raise
+    else:
+        logger.info(f"Resuming {src_table} at offset {offset} without dropping {dst_table}")
+
     total = 0
     while True:
         try:
             rows = await fetch_chunk_sqlserver(src_conn, src_table, sort_columns, offset, CHUNK_SIZE, where)
             if not rows:
                 break
+
             plugins = table_cfg.get("transforms", {}).get("plugins", [])
             if plugins:
                 rows = apply_plugin_chain(rows, plugins)
+
             inserted = await insert_chunk_pg(dst_conn, dst_table, rows)
             total += inserted
-            offset += len(rows)
-            write_checkpoint(src_table, offset)
-            logger.info(f"Copied {inserted} rows (total {total})")
+
+            # Advance offset/checkpoint only after successful insert
+            offset += inserted
+            write_checkpoint_keyed(src_conn, dst_conn, src_table, dst_table, offset)
+
+            logger.info(f"Copied {inserted} rows (offset now {offset}, total {total})")
+
         except Exception as e:
+            # No rewind: checkpoint already reflects last successful insert
             logger.error(f"Error at offset {offset}: {e}")
-            write_checkpoint(src_table, max(0, offset - CHUNK_SIZE))
             raise
-    write_checkpoint(src_table, 0)
+
+    # Completed this table successfully; clear checkpoint
+    write_checkpoint_keyed(src_conn, dst_conn, src_table, dst_table, 0)
     logger.info(f"Finished migration: {total} rows")
 
 async def main_migration():
