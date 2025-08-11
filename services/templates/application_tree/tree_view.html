@@ -4,31 +4,13 @@
 <head>
     <title>Application Tree View</title>
     <style>
-        body {
-            font-family: sans-serif;
-            padding: 2rem;
-        }
-        summary {
-            cursor: pointer;
-            font-weight: bold;
-        }
-        .tree {
-            margin-left: 1.5rem;
-            margin-bottom: 1rem;
-        }
-        .pagination {
-            margin-top: 2rem;
-        }
-        form.inline-form {
-            display: flex;
-            gap: 1rem;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-        select, input[type="text"] {
-            font-size: 1rem;
-            padding: 0.3rem;
-        }
+        body { font-family: sans-serif; padding: 2rem; }
+        summary { cursor: pointer; font-weight: bold; }
+        .tree { margin-left: 1.5rem; margin-bottom: 1rem; }
+        .pagination { margin-top: 2rem; display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap; }
+        form.inline-form { display:flex; gap:1rem; align-items:center; margin-bottom:1rem; }
+        select, input[type="text"] { font-size:1rem; padding:0.3rem; }
+        .page-link { text-decoration:none; }
     </style>
 </head>
 <body>
@@ -48,31 +30,28 @@
 
 {% for node in trees %}
     {% include "application_tree/_tree_node.html" with node=node %}
+    <hr style="border: none; border-top: 1px solid #ccc; margin: 1rem 0;">
     {% empty %}
     <p>No results found.</p>
 {% endfor %}
 
 <div class="pagination">
-    <span>
-        Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
-    </span>
-    <div>
-        {% if page_obj.has_previous %}
-            <a href="?{% querystring page=page_obj.previous_page_number %}">Previous</a>
-        {% endif %}
-        {% for i in page_obj.paginator.page_range %}
-            {% if i >= page_obj.number|add:"-5" and i <= page_obj.number|add:"5" %}
-                {% if page_obj.number == i %}
-                    <strong>{{ i }}</strong>
-                {% else %}
-                    <a href="?{% querystring page=i %}">{{ i }}</a>
-                {% endif %}
+    <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_previous %}
+        <a class="page-link" href="?{% querystring page=page_obj.previous_page_number %}">Previous</a>
+    {% endif %}
+    {% for i in page_obj.paginator.page_range %}
+        {% if i >= page_obj.number|add:"-5" and i <= page_obj.number|add:"5" %}
+            {% if page_obj.number == i %}
+                <strong>{{ i }}</strong>
+            {% else %}
+                <a class="page-link" href="?{% querystring page=i %}">{{ i }}</a>
             {% endif %}
-        {% endfor %}
-        {% if page_obj.has_next %}
-            <a href="?{% querystring page=page_obj.next_page_number %}">Next</a>
         {% endif %}
-    </div>
+    {% endfor %}
+    {% if page_obj.has_next %}
+        <a class="page-link" href="?{% querystring page=page_obj.next_page_number %}">Next</a>
+    {% endif %}
 </div>
 </body>
 </html>

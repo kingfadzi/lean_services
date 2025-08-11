@@ -22,7 +22,8 @@ def fetch_records(mode):
                 child_app.application_parent_correlation_id AS application_parent_correlation_id,
                 child_app.application_type,
                 child_app.application_tier,
-                child_app.architecture_type
+                child_app.architecture_type,
+                si.it_service_instance_sysid AS instance_sysid
             FROM public.vwsfitbusinessservice AS bs
             JOIN public.lean_control_application AS lca
               ON lca.servicenow_app_id = bs.service_correlation_id
@@ -50,7 +51,8 @@ def fetch_records(mode):
                 bac.application_parent_correlation_id AS application_parent_correlation_id,
                 bac.application_type,
                 bac.application_tier,
-                bac.architecture_type
+                bac.architecture_type,
+                si.it_service_instance_sysid AS instance_sysid
             FROM public.vwsfitserviceinstance AS si
             JOIN public.lean_control_application AS fia
               ON fia.servicenow_app_id = si.correlation_id
@@ -77,7 +79,7 @@ def fetch_records(mode):
         "lean_control_service_id", "jira_backlog_id", "service_id", "service_name",
         "app_correlation_id", "app_name", "instance_correlation_id", "instance_name",
         "environment", "install_type", "application_parent_correlation_id",
-        "application_type", "application_tier", "architecture_type"
+        "application_type", "application_tier", "architecture_type", "instance_sysid"
     ]
 
     df = pd.DataFrame(rows, columns=columns)
@@ -87,7 +89,6 @@ def fetch_records(mode):
 
 def fetch_repositories(app_ids):
     """Get repos grouped by tool for the given app IDs, safely."""
-    # Drop null/empty and cast to plain Python strings
     clean_ids = [str(a) for a in app_ids if a not in (None, "", "None")]
     if not clean_ids:
         return {}
@@ -110,7 +111,7 @@ def fetch_repositories(app_ids):
 
     repos_by_app = defaultdict(lambda: defaultdict(list))
     for app_id, tool_type, repo_name in rows:
-        if repo_name:  # ignore empty repo names
+        if repo_name:
             repos_by_app[app_id][tool_type].append(repo_name)
 
     return repos_by_app
@@ -139,6 +140,8 @@ def build_tree(df, search_term=None):
             "id": row["instance_correlation_id"],
             "name": row["instance_name"],
             "install_type": row["install_type"],
+            "sysid": row["instance_sysid"],          # <-- needed to join CRs
+            # "change_requests": []                  # will be added later
         }
         instances_by_app[app_id][env].append(inst)
 
@@ -151,15 +154,12 @@ def build_tree(df, search_term=None):
         parent_id = row["application_parent_correlation_id"]
 
         repo_groups = repos_by_app.get(app_id, {})
-        # ⚙️ normalize, drop empties, sort & dedupe just in case
         repo_groups = {
             str(tool): sorted({r for r in (repos or []) if r})
             for tool, repos in repo_groups.items()
             if repos
         }
         repo_count = sum(len(v) for v in repo_groups.values())
-
-        # ⚙️ create a stable list of (tool, repos) for the template to iterate
         repo_pairs = sorted(repo_groups.items(), key=lambda t: t[0].lower())
 
         nodes[app_id] = {
@@ -172,9 +172,9 @@ def build_tree(df, search_term=None):
             "jira_backlog_id": row["jira_backlog_id"],
             "service_name": row["service_name"],
             "service_id": row["service_id"],
-            "instances_grouped": dict(instances_by_app.get(app_id, {})),
-            "repositories": repo_groups,   # keep dict if you need it elsewhere
-            "repo_pairs": repo_pairs,      # ⚙️ use this in template
+            "instances_grouped": dict(instances_by_app.get(app_id, {})),  # env -> [inst...]
+            "repositories": repo_groups,
+            "repo_pairs": repo_pairs,
             "repo_count": repo_count,
             "children": [],
         }
@@ -198,19 +198,91 @@ def build_tree(df, search_term=None):
     return root_nodes
 
 
+def _collect_instance_sysids(roots):
+    """Collect instance sysids from the paginated root nodes (recursive)."""
+    sysids = set()
+
+    def walk(node):
+        for env, insts in node.get("instances_grouped", {}).items():
+            for inst in insts:
+                sid = inst.get("sysid")
+                if sid:
+                    sysids.add(sid)
+        for child in node.get("children", []):
+            walk(child)
+
+    for r in roots:
+        walk(r)
+    return list(sysids)
+
+
+def fetch_change_requests_for_instances(instance_sysids):
+    """
+    Batched CR fetch for the given instance_sysids.
+    spdw_vwsfaffectedcis:
+      - ci_sysid  (matches vwsfitserviceinstance.it_service_instance_sysid)
+      - task      (change request record id / reference)
+    """
+    if not instance_sysids:
+        return {}
+
+    clean = [str(s) for s in instance_sysids if s not in (None, "", "None")]
+    if not clean:
+        return {}
+
+    query = """
+        SELECT
+            ci_sysid,
+            task
+        FROM public.spdw_vwsfaffectedcis
+        WHERE ci_sysid = ANY(%s)
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, [clean])
+        rows = cursor.fetchall()
+
+    # Map: sysid -> [ { "task": ... }, ... ]
+    cr_map = defaultdict(list)
+    for ci_sysid, task in rows:
+        cr_map[ci_sysid].append({"task": task})
+    return dict(cr_map)
+
+
+def _enrich_roots_with_crs(roots, cr_map):
+    """Attach 'change_requests' to each instance (by its sysid) in the given root nodes."""
+    def walk(node):
+        for env, insts in node.get("instances_grouped", {}).items():
+            for inst in insts:
+                inst["change_requests"] = cr_map.get(inst.get("sysid"), [])
+        for child in node.get("children", []):
+            walk(child)
+
+    for r in roots:
+        walk(r)
+
+
 def application_tree_view(request):
     mode = request.GET.get("mode", "by_si")
     search_term = request.GET.get("search", "").strip()
     page_number = request.GET.get("page", 1)
 
+    # 1) Build full tree (without CRs)
     df = fetch_records(mode)
     tree = build_tree(df, search_term)
 
+    # 2) Paginate root nodes
     paginator = Paginator(tree, 25)
     page_obj = paginator.get_page(page_number)
+    page_roots = page_obj.object_list  # roots on this page
 
+    # 3) Collect instance sysids for only the visible roots, fetch CRs, enrich
+    instance_sysids = _collect_instance_sysids(page_roots)
+    cr_map = fetch_change_requests_for_instances(instance_sysids)
+    _enrich_roots_with_crs(page_roots, cr_map)
+
+    # 4) Render
     return render(request, "application_tree/tree_view.html", {
-        "trees": page_obj.object_list,
+        "trees": page_roots,
         "mode": mode,
         "search": search_term,
         "page_obj": page_obj,
