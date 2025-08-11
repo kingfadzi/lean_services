@@ -8,63 +8,125 @@
         summary { cursor: pointer; font-weight: bold; }
         .tree { margin-left: 1.5rem; margin-bottom: 1rem; }
         .pagination { margin-top: 2rem; display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap; }
-        form.inline-form { display:flex; gap:1rem; align-items:center; margin-bottom:1rem; flex-wrap: wrap; }
-        select, input[type="text"] { font-size:1rem; padding:0.3rem; }
+        form.inline-form { display:flex; gap:1rem; align-items:flex-end; flex-wrap:wrap; margin-bottom:1rem; }
+        label { font-size: 0.9rem; color:#334155; display:block; }
+        select, input[type="text"] { font-size:1rem; padding:0.35rem 0.5rem; min-width: 10rem; }
+        .form-group { display:flex; flex-direction:column; gap:0.25rem; }
         .page-link { text-decoration:none; }
-        .muted { color:#6b7280; }
+        hr.div { border: none; border-top: 1px solid #e5e7eb; margin: 1rem 0; }
     </style>
 </head>
 <body>
-<h1>Application Tree View <span class="muted">(mode: {{ mode }})</span></h1>
+<h1>Application Tree View (mode: {{ mode }})</h1>
 
 <form method="get" class="inline-form">
-    <label for="mode">Select Mode:</label>
-    <select name="mode" id="mode" onchange="this.form.submit()">
-        <option value="by_si" {% if mode == "by_si" %}selected{% endif %}>By Service Instance</option>
-        <option value="by_ts" {% if mode == "by_ts" %}selected{% endif %}>By Technical Service</option>
-    </select>
+    <!-- Mode -->
+    <div class="form-group">
+        <label for="mode">Mode</label>
+        <select name="mode" id="mode" onchange="this.form.submit()">
+            <option value="by_si" {% if mode == "by_si" %}selected{% endif %}>By Service Instance</option>
+            <option value="by_ts" {% if mode == "by_ts" %}selected{% endif %}>By Technical Service</option>
+        </select>
+    </div>
 
-    <label for="search">Search:</label>
-    <input type="text" name="search" id="search" value="{{ search }}" placeholder="Search apps, services, instances">
+    <!-- Global search -->
+    <div class="form-group">
+        <label for="search">Search</label>
+        <input type="text" name="search" id="search" value="{{ search }}">
+    </div>
 
-    <label for="tier">Tier:</label>
-    <select id="tier" name="tier" onchange="this.form.submit()">
-        <option value="">Any</option>
-        {% for v in filter_options.tiers %}
-            <option value="{{ v }}" {% if v == selected_tier %}selected{% endif %}>{{ v }}</option>
-        {% endfor %}
-    </select>
+    <!-- Children tri-state -->
+    <div class="form-group">
+        <label for="children">Children</label>
+        <select name="children" id="children" onchange="this.form.submit()">
+            <option value="both" {% if children_filter == "both" %}selected{% endif %}>Both</option>
+            <option value="with" {% if children_filter == "with" %}selected{% endif %}>With children</option>
+            <option value="without" {% if children_filter == "without" %}selected{% endif %}>Without children</option>
+        </select>
+    </div>
 
-    <label for="app_type">Application Type:</label>
-    <select id="app_type" name="app_type" onchange="this.form.submit()">
-        <option value="">Any</option>
-        {% for v in filter_options.app_types %}
-            <option value="{{ v }}" {% if v == selected_app_type %}selected{% endif %}>{{ v }}</option>
-        {% endfor %}
-    </select>
+    <!-- Application filters -->
+    <div class="form-group">
+        <label for="tier">Tier</label>
+        <select name="tier" id="tier">
+            <option value="">All</option>
+            {% for v in filter_options.tiers %}
+                <option value="{{ v }}" {% if selected_tier == v %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+        </select>
+    </div>
 
-    <label for="transaction_cycle">Owning Transaction Cycle:</label>
-    <select id="transaction_cycle" name="transaction_cycle" onchange="this.form.submit()">
-        <option value="">Any</option>
-        {% for v in filter_options.transaction_cycles %}
-            <option value="{{ v }}" {% if v == selected_txn_cycle %}selected{% endif %}>{{ v }}</option>
-        {% endfor %}
-    </select>
+    <div class="form-group">
+        <label for="app_type">Application Type</label>
+        <select name="app_type" id="app_type">
+            <option value="">All</option>
+            {% for v in filter_options.app_types %}
+                <option value="{{ v }}" {% if selected_app_type == v %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+        </select>
+    </div>
 
-    <label for="operational_status">Operational Status:</label>
-    <select id="operational_status" name="operational_status" onchange="this.form.submit()">
-        <option value="">Any</option>
-        {% for v in filter_options.operational_statuses %}
-            <option value="{{ v }}" {% if v == selected_op_status %}selected{% endif %}>{{ v }}</option>
-        {% endfor %}
-    </select>
+    <div class="form-group">
+        <label for="transaction_cycle">Owning Transaction Cycle</label>
+        <select name="transaction_cycle" id="transaction_cycle">
+            <option value="">All</option>
+            {% for v in filter_options.transaction_cycles %}
+                <option value="{{ v }}" {% if selected_txn_cycle == v %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+        </select>
+    </div>
 
-    <button type="submit">Apply</button>
+    <div class="form-group">
+        <label for="operational_status">Operational Status</label>
+        <select name="operational_status" id="operational_status">
+            <option value="">All</option>
+            {% for v in filter_options.operational_statuses %}
+                <option value="{{ v }}" {% if selected_op_status == v %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <!-- Service filters -->
+    <div class="form-group">
+        <label for="service_name">Service Name (contains)</label>
+        <input type="text" name="service_name" id="service_name" value="{{ selected_service_name }}">
+    </div>
+
+    <div class="form-group">
+        <label for="service_id">Service Correlation ID (exact)</label>
+        <input type="text" name="service_id" id="service_id" value="{{ selected_service_id }}">
+    </div>
+
+    <!-- Instance filters -->
+    <div class="form-group">
+        <label for="environment">Environment</label>
+        <select name="environment" id="environment">
+            <option value="">All</option>
+            {% for v in filter_options.environments %}
+                <option value="{{ v }}" {% if selected_environment == v %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="install_type">Install Type</label>
+        <select name="install_type" id="install_type">
+            <option value="">All</option>
+            {% for v in filter_options.install_types %}
+                <option value="{{ v }}" {% if selected_install_type == v %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label>&nbsp;</label>
+        <button type="submit">Apply</button>
+    </div>
 </form>
 
 {% for node in trees %}
     {% include "application_tree/_tree_node.html" with node=node %}
-    <hr style="border: none; border-top: 1px solid #ccc; margin: 1rem 0;">
+    <hr class="div">
     {% empty %}
     <p>No results found.</p>
 {% endfor %}
