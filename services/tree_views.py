@@ -1,11 +1,15 @@
 from django.shortcuts import render
 from django.db import connection
 from django.core.paginator import Paginator
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import pandas as pd
 
 
 def fetch_records(mode):
+    """
+    Base dataset (apps, services, instances) with instance_sysid included
+    so we can attach change requests later.
+    """
     if mode == "by_ts":
         query = """
             SELECT
@@ -88,7 +92,11 @@ def fetch_records(mode):
 
 
 def fetch_repositories(app_ids):
-    """Get repos grouped by tool for the given app IDs, safely."""
+    """
+    Get repositories grouped by tool for the given app IDs.
+    Use cm2.name when present, else fall back to cm2.identifier.
+    Then derive a human-friendly short name (strip path and .git).
+    """
     clean_ids = [str(a) for a in app_ids if a not in (None, "", "None")]
     if not clean_ids:
         return {}
@@ -98,7 +106,7 @@ def fetch_repositories(app_ids):
             SELECT
                 cm1.identifier AS app_id,
                 cm2.tool_type,
-                cm2.identifier AS repo_name
+                COALESCE(cm2.name, cm2.identifier) AS repo_raw
             FROM public.component_mapping cm1
             JOIN public.component_mapping cm2
               ON cm1.component_id = cm2.component_id
@@ -109,17 +117,40 @@ def fetch_repositories(app_ids):
         cursor.execute(query, [clean_ids])
         rows = cursor.fetchall()
 
-    repos_by_app = defaultdict(lambda: defaultdict(list))
-    for app_id, tool_type, repo_name in rows:
-        if repo_name:
-            repos_by_app[app_id][tool_type].append(repo_name)
+    def friendly(n):
+        if not n:
+            return n
+        # keep last path segment if it's a URL/path; strip .git
+        short = str(n).rsplit("/", 1)[-1]
+        if short.endswith(".git"):
+            short = short[:-4]
+        return short
 
-    return repos_by_app
+    repos_by_app = defaultdict(lambda: defaultdict(set))  # set -> auto-dedupe
+    for app_id, tool_type, repo_raw in rows:
+        name = friendly(repo_raw)
+        if name:
+            repos_by_app[app_id][tool_type].add(name)
 
+    # normalize to sorted lists
+    normalized = {}
+    for app_id, tools in repos_by_app.items():
+        normalized[app_id] = {
+            str(tool): sorted(list(names))
+            for tool, names in tools.items() if names
+        }
+    return normalized
 
 def build_tree(df, search_term=None):
+    """
+    Build the application-first hierarchy with:
+      - repositories (by tool) per app
+      - service instances grouped by environment, de-duplicated
+    Returns a list of root nodes.
+    """
     df = df.copy()
 
+    # Optional search (prune after build approach simplified here)
     if search_term:
         s = search_term.lower()
         mask = df.apply(lambda row: s in str(row.values).lower(), axis=1)
@@ -128,23 +159,31 @@ def build_tree(df, search_term=None):
         keep_apps = matching_apps.union(matching_parents)
         df = df[df["app_correlation_id"].isin(keep_apps)]
 
+    # Repositories per app
     app_ids = df["app_correlation_id"].unique().tolist()
     repos_by_app = fetch_repositories(app_ids)
 
-    # Group service instances by app and environment
-    instances_by_app = defaultdict(lambda: defaultdict(list))
+    # Group & dedupe service instances by app and environment (use OrderedDict to preserve first seen)
+    insts_map = defaultdict(lambda: defaultdict(OrderedDict))
     for _, row in df.iterrows():
         app_id = row["app_correlation_id"]
         env = row["environment"]
+        inst_id = row["instance_correlation_id"]
         inst = {
-            "id": row["instance_correlation_id"],
+            "id": inst_id,
             "name": row["instance_name"],
             "install_type": row["install_type"],
-            "sysid": row["instance_sysid"],          # <-- needed to join CRs
-            # "change_requests": []                  # will be added later
+            "sysid": row["instance_sysid"],
         }
-        instances_by_app[app_id][env].append(inst)
+        # overwrite or keep first; either dedupes by inst_id
+        insts_map[app_id][env][inst_id] = inst
 
+    # Convert OrderedDicts -> lists for template consumption
+    instances_grouped = {}
+    for app_id, env_map in insts_map.items():
+        instances_grouped[app_id] = {env: list(env_map[env].values()) for env in env_map}
+
+    # Build node graph
     nodes = {}
     parent_map = {}
     children_map = defaultdict(list)
@@ -154,11 +193,6 @@ def build_tree(df, search_term=None):
         parent_id = row["application_parent_correlation_id"]
 
         repo_groups = repos_by_app.get(app_id, {})
-        repo_groups = {
-            str(tool): sorted({r for r in (repos or []) if r})
-            for tool, repos in repo_groups.items()
-            if repos
-        }
         repo_count = sum(len(v) for v in repo_groups.values())
         repo_pairs = sorted(repo_groups.items(), key=lambda t: t[0].lower())
 
@@ -172,9 +206,9 @@ def build_tree(df, search_term=None):
             "jira_backlog_id": row["jira_backlog_id"],
             "service_name": row["service_name"],
             "service_id": row["service_id"],
-            "instances_grouped": dict(instances_by_app.get(app_id, {})),  # env -> [inst...]
-            "repositories": repo_groups,
-            "repo_pairs": repo_pairs,
+            "instances_grouped": instances_grouped.get(app_id, {}),  # env -> [instances...]
+            "repositories": repo_groups,    # dict for programmatic use
+            "repo_pairs": repo_pairs,       # list[(tool, [repos])]
             "repo_count": repo_count,
             "children": [],
         }
@@ -183,23 +217,21 @@ def build_tree(df, search_term=None):
         if parent_id and parent_id != app_id:
             children_map[parent_id].append(app_id)
 
+    # wire children
     for parent_id, child_ids in children_map.items():
         if parent_id in nodes:
             for child_id in child_ids:
                 if child_id in nodes:
                     nodes[parent_id]["children"].append(nodes[child_id])
 
-    root_ids = [
-        app_id for app_id in nodes
-        if parent_map.get(app_id) is None or parent_map[app_id] not in nodes
-    ]
-
-    root_nodes = [nodes[app_id] for app_id in sorted(root_ids, key=lambda aid: nodes[aid]["name"])]
+    # roots
+    root_ids = [app_id for app_id in nodes if parent_map.get(app_id) is None or parent_map[app_id] not in nodes]
+    root_nodes = [nodes[aid] for aid in sorted(root_ids, key=lambda aid: nodes[aid]["name"])]
     return root_nodes
 
 
 def _collect_instance_sysids(roots):
-    """Collect instance sysids from the paginated root nodes (recursive)."""
+    """Collect instance sysids from given root nodes (recursive)."""
     sysids = set()
 
     def walk(node):
@@ -219,9 +251,7 @@ def _collect_instance_sysids(roots):
 def fetch_change_requests_for_instances(instance_sysids):
     """
     Batched CR fetch for the given instance_sysids.
-    spdw_vwsfaffectedcis:
-      - ci_sysid  (matches vwsfitserviceinstance.it_service_instance_sysid)
-      - task      (change request record id / reference)
+    Table: spdw_vwsfaffectedcis (ci_sysid -> task)
     """
     if not instance_sysids:
         return {}
@@ -241,7 +271,6 @@ def fetch_change_requests_for_instances(instance_sysids):
         cursor.execute(query, [clean])
         rows = cursor.fetchall()
 
-    # Map: sysid -> [ { "task": ... }, ... ]
     cr_map = defaultdict(list)
     for ci_sysid, task in rows:
         cr_map[ci_sysid].append({"task": task})
@@ -249,7 +278,7 @@ def fetch_change_requests_for_instances(instance_sysids):
 
 
 def _enrich_roots_with_crs(roots, cr_map):
-    """Attach 'change_requests' to each instance (by its sysid) in the given root nodes."""
+    """Attach 'change_requests' to each instance (by sysid) for the given root nodes."""
     def walk(node):
         for env, insts in node.get("instances_grouped", {}).items():
             for inst in insts:
@@ -270,12 +299,12 @@ def application_tree_view(request):
     df = fetch_records(mode)
     tree = build_tree(df, search_term)
 
-    # 2) Paginate root nodes
+    # 2) Paginate roots (25 per page)
     paginator = Paginator(tree, 25)
     page_obj = paginator.get_page(page_number)
-    page_roots = page_obj.object_list  # roots on this page
+    page_roots = page_obj.object_list
 
-    # 3) Collect instance sysids for only the visible roots, fetch CRs, enrich
+    # 3) Fetch CRs only for instances on this page; then enrich
     instance_sysids = _collect_instance_sysids(page_roots)
     cr_map = fetch_change_requests_for_instances(instance_sysids)
     _enrich_roots_with_crs(page_roots, cr_map)
