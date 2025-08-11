@@ -37,3 +37,44 @@ WHERE parent.correlation_id IN (
                        ON child_app.application_parent_correlation_id = parent_app.correlation_id
     WHERE parent_app.correlation_id IS NOT NULL
 )
+
+SELECT
+    lca.lean_control_service_id           AS lean_service_id,
+    bs.service_correlation_id             AS service_correlation_id,
+    bs.service                            AS service_name,
+    COUNT(DISTINCT cr.task)               AS cr_count,
+    COUNT(DISTINCT si.it_service_instance_sysid) AS affected_instances
+FROM public.lean_control_application     AS lca
+         JOIN public.vwsfitbusinessservice        AS bs
+              ON bs.service_correlation_id = lca.servicenow_app_id
+         JOIN public.vwsfitserviceinstance        AS si
+              ON si.it_business_service_sysid = bs.it_business_service_sysid
+         JOIN public.spdw_vwsfaffectedcis         AS cr
+              ON cr.ci_sysid = si.it_service_instance_sysid
+GROUP BY
+    lca.lean_control_service_id,
+    bs.service_correlation_id,
+    bs.service
+HAVING COUNT(cr.task) > 0
+ORDER BY cr_count DESC, lean_service_id;
+
+
+SELECT
+    lca.lean_control_service_id           AS lean_service_id,
+    bs.service                            AS business_service_name,
+    si.correlation_id                     AS instance_correlation_id,
+    si.it_service_instance                AS instance_name,
+    si.environment,
+    cr.task                               AS change_request
+FROM public.lean_control_application     AS lca
+         JOIN public.vwsfitbusinessservice        AS bs
+              ON bs.service_correlation_id = lca.servicenow_app_id
+         JOIN public.vwsfitserviceinstance        AS si
+              ON si.it_business_service_sysid = bs.it_business_service_sysid
+         JOIN public.spdw_vwsfaffectedcis         AS cr
+              ON cr.ci_sysid = si.it_service_instance_sysid
+ORDER BY
+    lca.lean_control_service_id,
+    si.environment,
+    si.it_service_instance,
+    cr.task;
