@@ -8,13 +8,14 @@
         summary { cursor: pointer; font-weight: bold; }
         .tree { margin-left: 1.5rem; margin-bottom: 1rem; }
         .pagination { margin-top: 2rem; display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap; }
-        form.inline-form { display:flex; gap:1rem; align-items:center; margin-bottom:1rem; }
+        form.inline-form { display:flex; gap:1rem; align-items:center; margin-bottom:1rem; flex-wrap: wrap; }
         select, input[type="text"] { font-size:1rem; padding:0.3rem; }
         .page-link { text-decoration:none; }
+        .muted { color:#6b7280; }
     </style>
 </head>
 <body>
-<h1>Application Tree View (mode: {{ mode }})</h1>
+<h1>Application Tree View <span class="muted">(mode: {{ mode }})</span></h1>
 
 <form method="get" class="inline-form">
     <label for="mode">Select Mode:</label>
@@ -24,7 +25,40 @@
     </select>
 
     <label for="search">Search:</label>
-    <input type="text" name="search" id="search" value="{{ search }}">
+    <input type="text" name="search" id="search" value="{{ search }}" placeholder="Search apps, services, instances">
+
+    <label for="tier">Tier:</label>
+    <select id="tier" name="tier" onchange="this.form.submit()">
+        <option value="">Any</option>
+        {% for v in filter_options.tiers %}
+            <option value="{{ v }}" {% if v == selected_tier %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+    </select>
+
+    <label for="app_type">Application Type:</label>
+    <select id="app_type" name="app_type" onchange="this.form.submit()">
+        <option value="">Any</option>
+        {% for v in filter_options.app_types %}
+            <option value="{{ v }}" {% if v == selected_app_type %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+    </select>
+
+    <label for="transaction_cycle">Owning Transaction Cycle:</label>
+    <select id="transaction_cycle" name="transaction_cycle" onchange="this.form.submit()">
+        <option value="">Any</option>
+        {% for v in filter_options.transaction_cycles %}
+            <option value="{{ v }}" {% if v == selected_txn_cycle %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+    </select>
+
+    <label for="operational_status">Operational Status:</label>
+    <select id="operational_status" name="operational_status" onchange="this.form.submit()">
+        <option value="">Any</option>
+        {% for v in filter_options.operational_statuses %}
+            <option value="{{ v }}" {% if v == selected_op_status %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+    </select>
+
     <button type="submit">Apply</button>
 </form>
 

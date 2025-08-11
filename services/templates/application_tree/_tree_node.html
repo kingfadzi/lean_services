@@ -4,8 +4,10 @@
     </summary>
 
     <ul style="margin: 0.3rem 0; list-style-type: disc; padding-left: 1.5rem; font-size: 0.9em;">
-        <li><strong>Type:</strong> {{ node.type|default:"—" }}</li>
+        <li><strong>Application Type:</strong> {{ node.type|default:"—" }}</li>
         <li><strong>Tier:</strong> {{ node.tier|default:"—" }}</li>
+        <li><strong>Owning Transaction Cycle:</strong> {{ node.owning_transaction_cycle|default:"—" }}</li>
+        <li><strong>Operational Status:</strong> {{ node.operational_status|default:"—" }}</li>
         <li><strong>Architecture:</strong> {{ node.architecture|default:"—" }}</li>
         <li><strong>Lean Control ID:</strong> {{ node.lean_control_id|default:"—" }}</li>
         <li><strong>Jira Backlog ID:</strong> {{ node.jira_backlog_id|default:"—" }}</li>
@@ -48,7 +50,6 @@
                                             </small>
                                         </summary>
 
-                                        {# --- Change Requests fold under the instance --- #}
                                         {% with crs=inst.change_requests %}
                                             {% if crs and crs|length > 0 %}
                                                 <details class="tree" style="margin-top: 0.25rem;">

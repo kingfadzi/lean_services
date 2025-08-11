@@ -7,8 +7,8 @@ import pandas as pd
 
 def fetch_records(mode):
     """
-    Base dataset (apps, services, instances) with instance_sysid included
-    so we can attach change requests later.
+    Base dataset (apps, services, instances) with extra business app fields
+    for filtering/display (tier, type, owning_transaction_cycle, operational_status).
     """
     if mode == "by_ts":
         query = """
@@ -27,6 +27,8 @@ def fetch_records(mode):
                 child_app.application_type,
                 child_app.application_tier,
                 child_app.architecture_type,
+                child_app.owning_transaction_cycle,
+                child_app.operational_status,
                 si.it_service_instance_sysid AS instance_sysid
             FROM public.vwsfitbusinessservice AS bs
             JOIN public.lean_control_application AS lca
@@ -56,6 +58,8 @@ def fetch_records(mode):
                 bac.application_type,
                 bac.application_tier,
                 bac.architecture_type,
+                bac.owning_transaction_cycle,
+                bac.operational_status,
                 si.it_service_instance_sysid AS instance_sysid
             FROM public.vwsfitserviceinstance AS si
             JOIN public.lean_control_application AS fia
@@ -80,23 +84,27 @@ def fetch_records(mode):
         rows = cursor.fetchall()
 
     columns = [
-        "lean_control_service_id", "jira_backlog_id", "service_id", "service_name",
-        "app_correlation_id", "app_name", "instance_correlation_id", "instance_name",
-        "environment", "install_type", "application_parent_correlation_id",
-        "application_type", "application_tier", "architecture_type", "instance_sysid"
+        "lean_control_service_id", "jira_backlog_id",
+        "service_id", "service_name",
+        "app_correlation_id", "app_name",
+        "instance_correlation_id", "instance_name",
+        "environment", "install_type",
+        "application_parent_correlation_id",
+        "application_type", "application_tier", "architecture_type",
+        "owning_transaction_cycle", "operational_status",
+        "instance_sysid",
     ]
 
     df = pd.DataFrame(rows, columns=columns)
-    df.sort_values("app_name", inplace=True)
+    for col in ["application_type", "application_tier", "architecture_type",
+                "owning_transaction_cycle", "operational_status"]:
+        if col in df.columns:
+            df[col] = df[col].astype("object")
+    df.sort_values("app_name", inplace=True, kind="mergesort")
     return df
 
 
 def fetch_repositories(app_ids):
-    """
-    Get repositories grouped by tool for the given app IDs.
-    Use cm2.name when present, else fall back to cm2.identifier.
-    Then derive a human-friendly short name (strip path and .git).
-    """
     clean_ids = [str(a) for a in app_ids if a not in (None, "", "None")]
     if not clean_ids:
         return {}
@@ -120,37 +128,25 @@ def fetch_repositories(app_ids):
     def friendly(n):
         if not n:
             return n
-        # keep last path segment if it's a URL/path; strip .git
         short = str(n).rsplit("/", 1)[-1]
         if short.endswith(".git"):
             short = short[:-4]
         return short
 
-    repos_by_app = defaultdict(lambda: defaultdict(set))  # set -> auto-dedupe
+    repos_by_app = defaultdict(lambda: defaultdict(set))
     for app_id, tool_type, repo_raw in rows:
         name = friendly(repo_raw)
         if name:
             repos_by_app[app_id][tool_type].add(name)
 
-    # normalize to sorted lists
-    normalized = {}
-    for app_id, tools in repos_by_app.items():
-        normalized[app_id] = {
-            str(tool): sorted(list(names))
-            for tool, names in tools.items() if names
-        }
-    return normalized
+    return {
+        app_id: {str(tool): sorted(list(names)) for tool, names in tools.items() if names}
+        for app_id, tools in repos_by_app.items()
+    }
+
 
 def build_tree(df, search_term=None):
-    """
-    Build the application-first hierarchy with:
-      - repositories (by tool) per app
-      - service instances grouped by environment, de-duplicated
-    Returns a list of root nodes.
-    """
     df = df.copy()
-
-    # Optional search (prune after build approach simplified here)
     if search_term:
         s = search_term.lower()
         mask = df.apply(lambda row: s in str(row.values).lower(), axis=1)
@@ -159,11 +155,9 @@ def build_tree(df, search_term=None):
         keep_apps = matching_apps.union(matching_parents)
         df = df[df["app_correlation_id"].isin(keep_apps)]
 
-    # Repositories per app
     app_ids = df["app_correlation_id"].unique().tolist()
     repos_by_app = fetch_repositories(app_ids)
 
-    # Group & dedupe service instances by app and environment (use OrderedDict to preserve first seen)
     insts_map = defaultdict(lambda: defaultdict(OrderedDict))
     for _, row in df.iterrows():
         app_id = row["app_correlation_id"]
@@ -175,26 +169,21 @@ def build_tree(df, search_term=None):
             "install_type": row["install_type"],
             "sysid": row["instance_sysid"],
         }
-        # overwrite or keep first; either dedupes by inst_id
-        insts_map[app_id][env][inst_id] = inst
+        if app_id is not None and env is not None and inst_id is not None:
+            insts_map[app_id][env][inst_id] = inst
 
-    # Convert OrderedDicts -> lists for template consumption
-    instances_grouped = {}
-    for app_id, env_map in insts_map.items():
-        instances_grouped[app_id] = {env: list(env_map[env].values()) for env in env_map}
+    instances_grouped = {
+        app_id: {env: list(env_map[env].values()) for env in env_map}
+        for app_id, env_map in insts_map.items()
+    }
 
-    # Build node graph
-    nodes = {}
-    parent_map = {}
-    children_map = defaultdict(list)
-
+    nodes, parent_map, children_map = {}, {}, defaultdict(list)
     for _, row in df.drop_duplicates("app_correlation_id").iterrows():
         app_id = row["app_correlation_id"]
         parent_id = row["application_parent_correlation_id"]
-
         repo_groups = repos_by_app.get(app_id, {})
         repo_count = sum(len(v) for v in repo_groups.values())
-        repo_pairs = sorted(repo_groups.items(), key=lambda t: t[0].lower())
+        repo_pairs = sorted(repo_groups.items(), key=lambda t: (t[0] or "").lower())
 
         nodes[app_id] = {
             "id": app_id,
@@ -202,13 +191,15 @@ def build_tree(df, search_term=None):
             "type": row["application_type"],
             "tier": row["application_tier"],
             "architecture": row["architecture_type"],
+            "owning_transaction_cycle": row.get("owning_transaction_cycle"),
+            "operational_status": row.get("operational_status"),
             "lean_control_id": row["lean_control_service_id"],
             "jira_backlog_id": row["jira_backlog_id"],
             "service_name": row["service_name"],
             "service_id": row["service_id"],
-            "instances_grouped": instances_grouped.get(app_id, {}),  # env -> [instances...]
-            "repositories": repo_groups,    # dict for programmatic use
-            "repo_pairs": repo_pairs,       # list[(tool, [repos])]
+            "instances_grouped": instances_grouped.get(app_id, {}),
+            "repositories": repo_groups,
+            "repo_pairs": repo_pairs,
             "repo_count": repo_count,
             "children": [],
         }
@@ -217,53 +208,40 @@ def build_tree(df, search_term=None):
         if parent_id and parent_id != app_id:
             children_map[parent_id].append(app_id)
 
-    # wire children
     for parent_id, child_ids in children_map.items():
         if parent_id in nodes:
             for child_id in child_ids:
                 if child_id in nodes:
                     nodes[parent_id]["children"].append(nodes[child_id])
 
-    # roots
-    root_ids = [app_id for app_id in nodes if parent_map.get(app_id) is None or parent_map[app_id] not in nodes]
-    root_nodes = [nodes[aid] for aid in sorted(root_ids, key=lambda aid: nodes[aid]["name"])]
-    return root_nodes
+    root_ids = [aid for aid in nodes if parent_map.get(aid) is None or parent_map.get(aid) not in nodes]
+    return [nodes[aid] for aid in sorted(root_ids, key=lambda aid: nodes[aid]["name"])]
 
 
 def _collect_instance_sysids(roots):
-    """Collect instance sysids from given root nodes (recursive)."""
     sysids = set()
-
     def walk(node):
-        for env, insts in node.get("instances_grouped", {}).items():
+        for _, insts in node.get("instances_grouped", {}).items():
             for inst in insts:
                 sid = inst.get("sysid")
                 if sid:
                     sysids.add(sid)
         for child in node.get("children", []):
             walk(child)
-
     for r in roots:
         walk(r)
     return list(sysids)
 
 
 def fetch_change_requests_for_instances(instance_sysids):
-    """
-    Batched CR fetch for the given instance_sysids.
-    Table: spdw_vwsfaffectedcis (ci_sysid -> task)
-    """
     if not instance_sysids:
         return {}
-
     clean = [str(s) for s in instance_sysids if s not in (None, "", "None")]
     if not clean:
         return {}
 
     query = """
-        SELECT
-            ci_sysid,
-            task
+        SELECT ci_sysid, task
         FROM public.spdw_vwsfaffectedcis
         WHERE ci_sysid = ANY(%s)
     """
@@ -278,16 +256,50 @@ def fetch_change_requests_for_instances(instance_sysids):
 
 
 def _enrich_roots_with_crs(roots, cr_map):
-    """Attach 'change_requests' to each instance (by sysid) for the given root nodes."""
     def walk(node):
-        for env, insts in node.get("instances_grouped", {}).items():
+        for _, insts in node.get("instances_grouped", {}).items():
             for inst in insts:
                 inst["change_requests"] = cr_map.get(inst.get("sysid"), [])
         for child in node.get("children", []):
             walk(child)
-
     for r in roots:
         walk(r)
+
+
+def _make_filter_options(df):
+    def opts(col):
+        if col not in df.columns:
+            return []
+        vals = (
+            df[col]
+            .dropna()
+            .astype(str)
+            .map(str.strip)
+            .replace({"": None, "None": None})
+            .dropna()
+            .unique()
+            .tolist()
+        )
+        return sorted(vals, key=lambda v: v.lower())
+    return {
+        "tiers": opts("application_tier"),
+        "app_types": opts("application_type"),
+        "transaction_cycles": opts("owning_transaction_cycle"),
+        "operational_statuses": opts("operational_status"),
+    }
+
+
+def _apply_filters(df, tier, app_type, txn_cycle, op_status):
+    filt = df.copy()
+    if tier:
+        filt = filt[filt["application_tier"].astype(str) == str(tier)]
+    if app_type:
+        filt = filt[filt["application_type"].astype(str) == str(app_type)]
+    if txn_cycle and "owning_transaction_cycle" in filt.columns:
+        filt = filt[filt["owning_transaction_cycle"].astype(str) == str(txn_cycle)]
+    if op_status and "operational_status" in filt.columns:
+        filt = filt[filt["operational_status"].astype(str) == str(op_status)]
+    return filt
 
 
 def application_tree_view(request):
@@ -295,24 +307,40 @@ def application_tree_view(request):
     search_term = request.GET.get("search", "").strip()
     page_number = request.GET.get("page", 1)
 
-    # 1) Build full tree (without CRs)
-    df = fetch_records(mode)
+    selected_tier = request.GET.get("tier", "").strip()
+    selected_app_type = request.GET.get("app_type", "").strip()
+    selected_txn_cycle = request.GET.get("transaction_cycle", "").strip()
+    selected_op_status = request.GET.get("operational_status", "").strip()
+
+    base_df = fetch_records(mode)
+    filter_options = _make_filter_options(base_df)
+
+    df = _apply_filters(
+        base_df,
+        tier=selected_tier or None,
+        app_type=selected_app_type or None,
+        txn_cycle=selected_txn_cycle or None,
+        op_status=selected_op_status or None,
+    )
+
     tree = build_tree(df, search_term)
 
-    # 2) Paginate roots (25 per page)
     paginator = Paginator(tree, 25)
     page_obj = paginator.get_page(page_number)
     page_roots = page_obj.object_list
 
-    # 3) Fetch CRs only for instances on this page; then enrich
     instance_sysids = _collect_instance_sysids(page_roots)
     cr_map = fetch_change_requests_for_instances(instance_sysids)
     _enrich_roots_with_crs(page_roots, cr_map)
 
-    # 4) Render
     return render(request, "application_tree/tree_view.html", {
         "trees": page_roots,
         "mode": mode,
         "search": search_term,
         "page_obj": page_obj,
+        "filter_options": filter_options,
+        "selected_tier": selected_tier,
+        "selected_app_type": selected_app_type,
+        "selected_txn_cycle": selected_txn_cycle,
+        "selected_op_status": selected_op_status,
     })
