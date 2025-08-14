@@ -1,0 +1,15 @@
+services:
+  opa:
+    build: .
+    ports:
+      - "${OPA_PORT:-8181}:8181"
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--log-level=${OPA_LOG_LEVEL:-info}"
+      - "--log-format=${OPA_LOG_FORMAT:-json-pretty}"
+      - "/policies"
+    environment:
+      OPA_LOG_LEVEL: "${OPA_LOG_LEVEL:-info}"
+      OPA_PORT: "${OPA_PORT:-8181}"
