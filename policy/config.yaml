@@ -30,3 +30,9 @@ sql: |
     ON so.service_offering_join = si.service_offering_join
   WHERE child_app.correlation_id = %(app_id)s
   ORDER BY si.it_service_instance;
+
+opa:
+  url: "http://localhost:8181/v1/data/change_arb/result"
+  timeout_seconds: 5
+  headers:
+    Content-Type: "application/json"
